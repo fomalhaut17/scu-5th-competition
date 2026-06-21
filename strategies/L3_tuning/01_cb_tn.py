@@ -1,0 +1,86 @@
+"""
+[L3-01] CatBoost 튜닝
+──────────────────────────
+레이어  : L3 (튜닝, 피처: L1 확정 FE)
+축약명  : CB+TN
+주요 전략: Optuna로 CatBoost 하이퍼파라미터 최적화 (5-Fold CV)
+결과    : OOF RMSE 2,267 ★ L3 최선
+제출파일: submission_l3_01_cb_tn.csv
+"""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+import numpy as np
+import optuna
+from catboost import CatBoostRegressor
+from sklearn.model_selection import KFold
+from utils import (load_data, base_preprocess, add_feature_engineering,
+                   encode_categoricals, kfold_train_predict, save_submission,
+                   CAT_FEATURES, N_SPLITS)
+
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+train, test, sample_sub = load_data()
+
+train_p = add_feature_engineering(base_preprocess(train))
+test_p = add_feature_engineering(base_preprocess(test))
+train_p, test_p = encode_categoricals(train_p, test_p, as_category=False)
+
+X = train_p.drop(columns=['Target'])
+y = np.log1p(train_p['Target'])
+X_test = test_p
+
+cat_indices = [X.columns.get_loc(c) for c in CAT_FEATURES]
+
+
+def objective(trial):
+    params = {
+        'loss_function': 'RMSE', 'random_seed': 42, 'verbose': 0,
+        'iterations': 2000, 'early_stopping_rounds': 50,
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.15),
+        'depth': trial.suggest_int('depth', 4, 10),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-3, 10.0, log=True),
+        'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+        'random_strength': trial.suggest_float('random_strength', 1e-3, 10.0, log=True),
+        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 1, 30),
+    }
+
+    kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+    oof = np.zeros(len(X))
+    for tr_idx, va_idx in kf.split(X):
+        m = CatBoostRegressor(**params)
+        m.fit(X.iloc[tr_idx], y.iloc[tr_idx],
+              eval_set=(X.iloc[va_idx], y.iloc[va_idx]), cat_features=cat_indices)
+        oof[va_idx] = np.expm1(m.predict(X.iloc[va_idx]))
+    return np.sqrt(np.mean((oof - np.expm1(y.values)) ** 2))
+
+
+print("Optuna 탐색 (100 trials × 5-Fold)...")
+study = optuna.create_study(direction='minimize')
+study.optimize(objective, n_trials=100, show_progress_bar=True)
+
+print(f"\n최적 RMSE: {study.best_value:,.0f} 만원")
+for k, v in study.best_params.items():
+    print(f"  {k}: {v}")
+
+best = study.best_params
+
+
+def model_fn():
+    return CatBoostRegressor(
+        loss_function='RMSE', random_seed=42, verbose=0,
+        iterations=2000, early_stopping_rounds=50, **best)
+
+
+def fit_fn(model, X_tr, y_tr, X_va, y_va):
+    model.fit(X_tr, y_tr, eval_set=(X_va, y_va), cat_features=cat_indices)
+    return model
+
+
+print(f"\n[L3-01 CB+TN] 최적 파라미터로 5-Fold CV")
+oof_pred, test_pred, rmse = kfold_train_predict(X, y, X_test, model_fn, fit_fn)
+
+save_submission(sample_sub, test_pred, 'submission_l3_01_cb_tn.csv')
+
+np.save(os.path.join(os.path.dirname(__file__), 'cb_tn_oof.npy'), oof_pred)
+np.save(os.path.join(os.path.dirname(__file__), 'cb_tn_test.npy'), test_pred)

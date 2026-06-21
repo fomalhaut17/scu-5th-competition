@@ -5,7 +5,12 @@
       "Bash(pdftoppm -v)",
       "Bash(pdftotext \"/Users/leewonseok/playground/scu-5th-competition/docs/제5회 인공지능 모델링 경진대회 설명회.pdf\" -)",
       "Bash(python3 main.py)",
-      "Bash(python3 feature_engineering.py)"
+      "Bash(python3 feature_engineering.py)",
+      "Bash(python dashboard.py)",
+      "Bash(cp submission_l4_01_bl.csv submissions.csv)"
+    ],
+    "additionalDirectories": [
+      "/Users/leewonseok/playground/scu-5th-competition"
     ]
   }
 }
