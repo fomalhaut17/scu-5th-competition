@@ -1,0 +1,14 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Search Pandas Docs",
+            "type": "shell",
+            "command": "open",
+            "args": ["'https://www.google.com/search?q=python+${selectedText}'"],
+            "presentation": {
+                "reveal": "never"
+            }
+        }
+    ]
+}

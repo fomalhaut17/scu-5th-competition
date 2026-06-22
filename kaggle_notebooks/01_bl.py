@@ -2,8 +2,12 @@
 SCU 5th AI Competition - Kaggle 제출용 통합 스크립트
 파이프라인: FE → CatBoost+Optuna + LightGBM+Optuna → 블렌딩 (50:50)
 """
-import subprocess, os
-subprocess.run(['pip', 'install', 'optuna', '-q'])
+import os
+try:
+    import optuna
+except ImportError:
+    import subprocess
+    subprocess.run(['pip', 'install', 'optuna', '-q'])
 
 import numpy as np
 import pandas as pd
