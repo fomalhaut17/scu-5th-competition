@@ -1,7 +1,7 @@
 """
-01 BL
-파이프라인: FE → CatBoost + LightGBM → 블렌딩
-하드코딩 버전: Optuna 제거, 로컬 최적 파라미터 사용
+02 BL TREND
+파이프라인: FE → CatBoost + LightGBM → 블렌딩 → 트렌드 보정
+변경점: 학습 데이터의 월별 상승률(0.41%)로 2026년 예측값 보정
 """
 import os
 import numpy as np
@@ -29,6 +29,15 @@ train = pd.read_csv(f'{INPUT_DIR}/seoul_real_estate_train.csv')
 test = pd.read_csv(f'{INPUT_DIR}/seoul_real_estate_test.csv')
 sample_sub = pd.read_csv(f'{INPUT_DIR}/sample_submission.csv')
 y_true = train['Target'].values
+
+# === 트렌드 보정 계수 계산 ===
+monthly_avg = train.groupby('Transaction_YearMonth')['Target'].mean()
+monthly_growth = monthly_avg.pct_change().dropna().mean()
+last_train_ym = train['Transaction_YearMonth'].max()
+last_train_seq = (last_train_ym // 100 - 2024) * 12 + last_train_ym % 100
+
+print(f"월평균 성장률: {monthly_growth:.4f} ({monthly_growth*100:.2f}%)")
+print(f"마지막 학습 월: {last_train_ym}")
 
 # === 전처리 ===
 def base_preprocess(df):
@@ -61,6 +70,12 @@ def encode_categoricals(train_df, test_df, as_category=False):
             test_df[col] = test_df[col].astype('category')
     return train_df, test_df
 
+# 테스트 데이터의 YearMonth_Seq (보정 계수 계산용)
+test_seq = (test['Transaction_YearMonth'] // 100 - 2024) * 12 + test['Transaction_YearMonth'] % 100
+months_ahead = test_seq.values - last_train_seq
+trend_correction = (1 + monthly_growth) ** months_ahead
+print(f"보정 범위: +{(trend_correction.min()-1)*100:.1f}% ~ +{(trend_correction.max()-1)*100:.1f}%")
+
 train_p = add_feature_engineering(base_preprocess(train))
 test_p = add_feature_engineering(base_preprocess(test))
 
@@ -84,9 +99,9 @@ def kfold_train_predict(X, y, X_test, model_fn, fit_fn):
     return oof_pred, test_preds
 
 # ========================================
-# 1. CatBoost (하드코딩 파라미터)
+# 1. CatBoost
 # ========================================
-print("=" * 50)
+print("\n" + "=" * 50)
 print("[1/3] CatBoost 학습")
 print("=" * 50)
 
@@ -117,7 +132,7 @@ def cb_fit_fn(model, X_tr, y_tr, X_va, y_va):
 cb_oof, cb_test = kfold_train_predict(X_cb, y_cb, X_test_cb, cb_model_fn, cb_fit_fn)
 
 # ========================================
-# 2. LightGBM (하드코딩 파라미터)
+# 2. LightGBM
 # ========================================
 print("\n" + "=" * 50)
 print("[2/3] LightGBM 학습")
@@ -152,10 +167,10 @@ def lgb_fit_fn(model, X_tr, y_tr, X_va, y_va):
 lgb_oof, lgb_test = kfold_train_predict(X_lgb, y_lgb, X_test_lgb, lgb_model_fn, lgb_fit_fn)
 
 # ========================================
-# 3. 블렌딩
+# 3. 블렌딩 + 트렌드 보정
 # ========================================
 print("\n" + "=" * 50)
-print("[3/3] 최적 블렌딩")
+print("[3/3] 블렌딩 + 트렌드 보정")
 print("=" * 50)
 
 best_rmse = float('inf')
@@ -171,8 +186,14 @@ print(f"CatBoost  가중치: {best_w:.0%}")
 print(f"LightGBM 가중치: {1 - best_w:.0%}")
 print(f"블렌딩 OOF RMSE: {best_rmse:,.0f}")
 
+# 트렌드 보정 적용
+final_pred_raw = best_w * cb_test + (1 - best_w) * lgb_test
+final_pred = final_pred_raw * trend_correction
+
+print(f"\n트렌드 보정 전 평균: {final_pred_raw.mean():,.0f}")
+print(f"트렌드 보정 후 평균: {final_pred.mean():,.0f}")
+
 # === 제출 파일 생성 ===
-final_pred = best_w * cb_test + (1 - best_w) * lgb_test
 sub = sample_sub.copy()
 sub['Target'] = final_pred
 sub.to_csv(f'{OUTPUT_DIR}/submission.csv', index=False)
