@@ -2,7 +2,8 @@
 SCU 5th AI Competition - Kaggle 제출용 통합 스크립트
 파이프라인: FE → CatBoost+Optuna + LightGBM+Optuna → 블렌딩 (50:50)
 """
-!pip install optuna -q
+import subprocess, os
+subprocess.run(['pip', 'install', 'optuna', '-q'])
 
 import numpy as np
 import pandas as pd
@@ -15,8 +16,13 @@ import warnings
 warnings.filterwarnings('ignore')
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-INPUT_DIR = '/kaggle/input/competitions/scu-5th-ai-competition'
-OUTPUT_DIR = '/kaggle/working'
+if os.path.exists('/kaggle/input'):
+    INPUT_DIR = '/kaggle/input/competitions/scu-5th-ai-competition'
+    OUTPUT_DIR = '/kaggle/working'
+else:
+    _DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    INPUT_DIR = _DIR
+    OUTPUT_DIR = _DIR
 N_SPLITS = 5
 CAT_FEATURES = ['Gu', 'Dong']
 
