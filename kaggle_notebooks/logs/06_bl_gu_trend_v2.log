@@ -1,0 +1,62 @@
+Time
+#
+Log Message
+8.8s	1	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+8.8s	2	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+8.8s	3	0.00s - to python to disable frozen modules.
+8.8s	4	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+9.6s	5	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+9.6s	6	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+9.6s	7	0.00s - to python to disable frozen modules.
+9.6s	8	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+20.3s	9	=== 구별 월성장률 ===
+20.3s	10	  Nowon-gu       : +2.20%
+20.3s	11	  Seongdong-gu   : +1.87%
+20.3s	12	  Seocho-gu      : +1.16%
+20.3s	13	  Yongsan-gu     : +0.88%
+20.3s	14	  Songpa-gu      : +0.85%
+20.3s	15	  Gangnam-gu     : +0.51%
+20.3s	16	  Mapo-gu        : +0.43%
+20.3s	17	  Eunpyeong-gu   : +0.43%
+20.3s	18	
+20.3s	19	보정 범위: +0.4% ~ +6.8%
+20.3s	20	
+20.3s	21	==================================================
+20.3s	22	[1/3] CatBoost 학습 (V2)
+20.3s	23	==================================================
+24.0s	24	  Fold 1/5 → RMSE: 2,628
+27.1s	25	  Fold 2/5 → RMSE: 2,286
+30.9s	26	  Fold 3/5 → RMSE: 1,996
+34.6s	27	  Fold 4/5 → RMSE: 2,387
+38.4s	28	  Fold 5/5 → RMSE: 1,950
+38.4s	29	  OOF RMSE: 2,264
+38.4s	30	
+38.4s	31	==================================================
+38.4s	32	[2/3] LightGBM 학습 (V2)
+38.4s	33	==================================================
+38.8s	34	  Fold 1/5 → RMSE: 2,644
+39.2s	35	  Fold 2/5 → RMSE: 2,280
+39.5s	36	  Fold 3/5 → RMSE: 2,091
+39.8s	37	  Fold 4/5 → RMSE: 2,364
+39.9s	38	  Fold 5/5 → RMSE: 2,009
+39.9s	39	  OOF RMSE: 2,289
+39.9s	40	
+39.9s	41	==================================================
+39.9s	42	[3/3] 블렌딩 + 구별 트렌드 보정
+39.9s	43	==================================================
+39.9s	44	CatBoost  가중치: 60%
+39.9s	45	LightGBM 가중치: 40%
+39.9s	46	블렌딩 OOF RMSE: 2,239
+39.9s	47	
+39.9s	48	트렌드 보정 전 평균: 39,387
+39.9s	49	트렌드 보정 후 평균: 40,207
+39.9s	50	
+39.9s	51	제출 파일 저장 완료: /kaggle/working/submission.csv
+44.1s	52	/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\|'
+44.1s	53	  cells[i][c] = re.sub('\\\\\|', '|', cell)
+44.3s	54	/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\_'
+44.3s	55	  text = re.sub(r'_', '\_', text) # Escape underscores in display text
+45.3s	56	[NbConvertApp] Converting notebook __notebook__.ipynb to notebook
+45.7s	57	[NbConvertApp] Writing 12328 bytes to __notebook__.ipynb
+49.3s	58	[NbConvertApp] Converting notebook __notebook__.ipynb to html
+50.5s	59	[NbConvertApp] Writing 316780 bytes to __results__.html

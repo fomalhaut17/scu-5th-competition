@@ -7,7 +7,26 @@
       "Bash(python3 main.py)",
       "Bash(python3 feature_engineering.py)",
       "Bash(python dashboard.py)",
-      "Bash(cp submission_l4_01_bl.csv submissions.csv)"
+      "Bash(cp submission_l4_01_bl.csv submissions.csv)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python3 -c \"import pandas as pd; df = pd.read_csv\\('/Users/leewonseok/playground/scu-5th-competition/seoul_real_estate_train.csv'\\); print\\(df['Transaction_YearMonth'].min\\(\\), df['Transaction_YearMonth'].max\\(\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 kaggle_notebooks/01_bl.py)",
+      "Bash(python3 kaggle_notebooks/02_bl_trend.py)",
+      "Bash(python3 kaggle_notebooks/03_bl_gu_trend.py)",
+      "Bash(python3 kaggle_notebooks/04_bl_dong_trend.py)",
+      "WebSearch",
+      "Bash(python3 kaggle_notebooks/05_bl_real_trend.py)",
+      "Bash(python3 kaggle_notebooks/06_bl_gu_trend_v2.py)",
+      "Bash(python3 kaggle_notebooks/07_bl3_gu_trend.py)",
+      "Bash(python3 kaggle_notebooks/08_stack_gu_trend.py)",
+      "Bash(python kaggle_notebooks/09_stack_gu_ewm_trend.py)",
+      "Bash(python strategies/_exceptions/oot_validation_test.py)",
+      "Bash(pip install *)",
+      "Bash(python3)",
+      "Bash(python kaggle_notebooks/10_stack_gu_real_trend.py)"
     ],
     "additionalDirectories": [
       "/Users/leewonseok/playground/scu-5th-competition"

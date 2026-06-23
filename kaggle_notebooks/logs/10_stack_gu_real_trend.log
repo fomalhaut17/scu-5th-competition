@@ -1,0 +1,70 @@
+Time
+#
+Log Message
+7.2s	1	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+7.2s	2	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+7.2s	3	0.00s - to python to disable frozen modules.
+7.2s	4	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+7.8s	5	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+7.8s	6	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+7.8s	7	0.00s - to python to disable frozen modules.
+7.8s	8	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+16.4s	9	=== 구별 실제 월성장률 (외부 데이터 기반) ===
+16.4s	10	  Yongsan-gu     : +4.91%
+16.4s	11	  Seongdong-gu   : +4.78%
+16.4s	12	  Seocho-gu      : +1.13%
+16.4s	13	  Songpa-gu      : +0.49%
+16.4s	14	  Nowon-gu       : -0.37%
+16.4s	15	  Gangnam-gu     : -0.72%
+16.4s	16	  Eunpyeong-gu   : -1.18%
+16.4s	17	  Mapo-gu        : -2.07%
+16.4s	18	
+16.4s	19	보정 범위: -6.1% ~ +15.5%
+16.4s	20	==================================================
+16.4s	21	[1/3] CatBoost 학습
+16.4s	22	==================================================
+19.2s	23	  Fold 1/5 → RMSE: 2,628
+21.6s	24	  Fold 2/5 → RMSE: 2,286
+24.6s	25	  Fold 3/5 → RMSE: 1,996
+27.5s	26	  Fold 4/5 → RMSE: 2,387
+30.5s	27	  Fold 5/5 → RMSE: 1,950
+30.5s	28	  OOF RMSE: 2,264
+30.5s	29	
+30.5s	30	==================================================
+30.5s	31	[2/3] LightGBM 학습
+30.5s	32	==================================================
+30.8s	33	  Fold 1/5 → RMSE: 2,644
+31.1s	34	  Fold 2/5 → RMSE: 2,280
+31.4s	35	  Fold 3/5 → RMSE: 2,091
+31.7s	36	  Fold 4/5 → RMSE: 2,364
+31.8s	37	  Fold 5/5 → RMSE: 2,009
+31.8s	38	  OOF RMSE: 2,289
+31.8s	39	
+31.8s	40	==================================================
+31.8s	41	[3/3] Ridge 스태킹 + 실제 트렌드 보정
+31.8s	42	==================================================
+31.8s	43	스태킹 OOF RMSE: 2,234
+31.8s	44	Ridge 계수: CB=0.6073, LGB=0.3988, 절편=-27.3
+31.8s	45	
+31.8s	46	트렌드 보정 전 평균: 39,593
+31.8s	47	트렌드 보정 후 평균: 40,472
+31.8s	48	
+31.8s	49	구별 보정 효과:
+31.8s	50	  Eunpyeong-gu   : 29,687 → 28,989 (↓)
+31.8s	51	  Gangnam-gu     : 49,363 → 48,649 (↓)
+31.8s	52	  Mapo-gu        : 35,642 → 34,186 (↓)
+31.8s	53	  Nowon-gu       : 31,534 → 31,279 (↓)
+31.8s	54	  Seocho-gu      : 44,355 → 45,338 (↑)
+31.8s	55	  Seongdong-gu   : 37,090 → 40,606 (↑)
+31.8s	56	  Songpa-gu      : 42,157 → 42,567 (↑)
+31.8s	57	  Yongsan-gu     : 44,772 → 49,262 (↑)
+31.8s	58	
+31.8s	59	제출 파일 저장 완료: /kaggle/working/submission.csv
+35.4s	60	/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\|'
+35.4s	61	  cells[i][c] = re.sub('\\\\\|', '|', cell)
+35.6s	62	/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\_'
+35.6s	63	  text = re.sub(r'_', '\_', text) # Escape underscores in display text
+36.3s	64	[NbConvertApp] Converting notebook __notebook__.ipynb to notebook
+36.7s	65	[NbConvertApp] Writing 13362 bytes to __notebook__.ipynb
+39.8s	66	[NbConvertApp] Converting notebook __notebook__.ipynb to html
+40.8s	67	[NbConvertApp] Writing 321638 bytes to __results__.html

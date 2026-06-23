@@ -1,0 +1,89 @@
+10.0s	1	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+10.0s	2	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+10.0s	3	0.00s - to python to disable frozen modules.
+10.0s	4	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+10.8s	5	0.00s - Debugger warning: It seems that frozen modules are being used, which may
+10.8s	6	0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+10.8s	7	0.00s - to python to disable frozen modules.
+10.8s	8	0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+13.6s	9	/kaggle/input/competitions/scu-5th-ai-competition/sample_submission.csv
+13.6s	10	/kaggle/input/competitions/scu-5th-ai-competition/seoul_real_estate_test.csv
+13.6s	11	/kaggle/input/competitions/scu-5th-ai-competition/seoul_real_estate_train.csv
+13.6s	12	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/__results__.html
+13.6s	13	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/submission.csv
+13.6s	14	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/__notebook__.ipynb
+13.6s	15	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/__output__.json
+13.6s	16	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/custom.css
+13.6s	17	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/test_error.tsv
+13.6s	18	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/learn_error.tsv
+13.6s	19	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/catboost_training.json
+13.6s	20	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/time_left.tsv
+13.6s	21	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/learn/events.out.tfevents
+13.6s	22	/kaggle/input/notebooks/haniboson/notebook4d1f91ef46/catboost_info/test/events.out.tfevents
+23.2s	23	=== 동별 월성장률 (보정 후) ===
+23.2s	24	  Yeonsinnae     : +3.73%
+23.2s	25	  Sanggye        : +3.59%
+23.2s	26	  Oksu           : +3.47%
+23.2s	27	  Seongsu        : +3.36%
+23.2s	28	  Bangbae        : +3.13%
+23.2s	29	  Jamsil         : +2.79%
+23.2s	30	  Ahyeon         : +2.77%
+23.2s	31	  Geumho         : +2.66%
+23.2s	32	  Bulgwang       : +2.51%
+23.2s	33	  Seocho         : +2.24%
+23.2s	34	  Junggye        : +2.20%
+23.2s	35	  Ichon          : +2.10%
+23.2s	36	  Susaek         : +2.09%
+23.2s	37	  Wolgye         : +1.91%
+23.2s	38	  Hannam         : +1.78%
+23.2s	39	  Samsung        : +1.71%
+23.2s	40	  Sangam         : +1.46%
+23.2s	41	  Hapjeong       : +1.41%
+23.2s	42	  Daechi         : +1.25%
+23.2s	43	  Banpo          : +0.94%
+23.2s	44	  Garak          : +0.89%
+23.2s	45	  Itaewon        : +0.88%
+23.2s	46	  Apgujeong      : +0.52%
+23.2s	47	  Munjjeong      : +0.30%
+23.2s	48	
+23.2s	49	보정 범위: +0.3% ~ +11.6%
+23.2s	50	
+23.2s	51	==================================================
+23.2s	52	[1/3] CatBoost 학습
+23.2s	53	==================================================
+24.2s	54	  Fold 1/5 → RMSE: 2,645
+25.1s	55	  Fold 2/5 → RMSE: 2,275
+26.0s	56	  Fold 3/5 → RMSE: 2,005
+26.8s	57	  Fold 4/5 → RMSE: 2,398
+27.9s	58	  Fold 5/5 → RMSE: 1,990
+27.9s	59	  OOF RMSE: 2,276
+27.9s	60	
+27.9s	61	==================================================
+27.9s	62	[2/3] LightGBM 학습
+27.9s	63	==================================================
+28.4s	64	  Fold 1/5 → RMSE: 2,686
+28.7s	65	  Fold 2/5 → RMSE: 2,271
+29.1s	66	  Fold 3/5 → RMSE: 2,178
+29.4s	67	  Fold 4/5 → RMSE: 2,374
+29.6s	68	  Fold 5/5 → RMSE: 1,984
+29.6s	69	  OOF RMSE: 2,311
+29.6s	70	
+29.6s	71	==================================================
+29.6s	72	[3/3] 블렌딩 + 동별 트렌드 보정
+29.6s	73	==================================================
+29.6s	74	CatBoost  가중치: 60%
+29.6s	75	LightGBM 가중치: 40%
+29.6s	76	블렌딩 OOF RMSE: 2,247
+29.6s	77	
+29.6s	78	트렌드 보정 전 평균: 39,369
+29.6s	79	트렌드 보정 후 평균: 40,994
+29.6s	80	
+29.6s	81	제출 파일 저장 완료: /kaggle/working/submission.csv
+33.7s	82	/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\|'
+33.7s	83	  cells[i][c] = re.sub('\\\\\|', '|', cell)
+33.9s	84	/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\_'
+33.9s	85	  text = re.sub(r'_', '\_', text) # Escape underscores in display text
+34.8s	86	[NbConvertApp] Converting notebook __notebook__.ipynb to notebook
+35.2s	87	[NbConvertApp] Writing 16924 bytes to __notebook__.ipynb
+38.5s	88	[NbConvertApp] Converting notebook __notebook__.ipynb to html
+39.7s	89	[NbConvertApp] Writing 324086 bytes to __results__.html
