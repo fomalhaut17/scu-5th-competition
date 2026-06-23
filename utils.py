@@ -151,6 +151,17 @@ def kfold_train_predict(X, y, X_test, model_fn, fit_fn, n_splits=N_SPLITS):
     return oof_pred, test_preds, overall_rmse
 
 
+def oot_split(df, holdout_months=3):
+    """Out-of-Time 분할. 마지막 n개월을 검증셋으로 분리.
+    Returns: train_idx, val_idx, cutoff_ym"""
+    ym = df['Transaction_YearMonth']
+    unique_ym = sorted(ym.unique())
+    cutoff_ym = unique_ym[-holdout_months]
+    train_idx = df.index[ym < cutoff_ym].tolist()
+    val_idx = df.index[ym >= cutoff_ym].tolist()
+    return train_idx, val_idx, cutoff_ym
+
+
 def record_result(layer, num, abbr, description, oof_rmse, status='tested'):
     """results.csv에 결과 기록. 같은 layer+num이 있으면 업데이트."""
     csv_path = os.path.join(ROOT_DIR, 'results.csv')

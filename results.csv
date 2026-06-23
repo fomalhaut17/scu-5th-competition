@@ -1,0 +1,20 @@
+layer,num,abbr,description,oof_rmse,status,date,public_rmse
+L1,01,FE,피처 엔지니어링,2403,confirmed,,
+L1,02,TE,타겟 인코딩,2445,dropped,,
+L1,03,FE+TE,피처 엔지니어링 + 타겟 인코딩,2446,dropped,,
+L2,01,CB,CatBoost,2310,confirmed,,
+L2,02,LR,Ridge 회귀,5765,confirmed,,
+L2,03,XB,XGBoost,2644,dropped,,
+L3,01,CB+TN,CatBoost 튜닝,2267,confirmed,,
+L3,02,LGB+TN,LightGBM 튜닝,2298,confirmed,,
+L3,03,LR+TN,Ridge 튜닝,5765,dropped,,
+L4,01,BL,CB+LGB 블렌딩,2242,confirmed,2026-06-22,2537
+L4,02,BL+TR,CB+LGB 블렌딩 + 트렌드 보정,2247,confirmed,2026-06-22,2320
+L4,03,BL+GTR,CB+LGB 블렌딩 + 구별 트렌드 보정,2247,confirmed,2026-06-22,2212
+L4,06,BL+GTR2,CB+LGB 재튜닝 + 구별 트렌드 보정,2239,confirmed,2026-06-23,2187
+L4,08,STK+GTR,CB+LGB Ridge 스태킹 + 구별 트렌드 보정,2234,best,2026-06-23,2155
+L4,07,BL3+GTR,CB+LGB+XGB 3모델 + 구별 트렌드 보정,2237,dropped,2026-06-23,2192
+L4,04,BL+DTR,CB+LGB 블렌딩 + 동별 트렌드 보정,2247,dropped,2026-06-22,2383
+L4,05,BL+RTR,CB+LGB 블렌딩 + 실제 2026 상승률 보정,2247,dropped,2026-06-22,2335
+L4,09,STK+EWMTR,CB+LGB Ridge 스태킹 + 구별 EWM 트렌드 보정,2234,dropped,2026-06-23,3154
+L4,10,STK+RLTR,CB+LGB Ridge 스태킹 + 외부 실거래 트렌드 보정,2234,dropped,2026-06-23,3021
