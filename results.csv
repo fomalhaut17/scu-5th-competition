@@ -28,3 +28,10 @@ L4,18,BLD0816,전략08(70%)+전략16(30%) 블렌딩 + 구별 트렌드,2235,conf
 L4,18b,BLD0816b,전략08(85%)+전략16(15%) 블렌딩 + 구별 트렌드,2235,confirmed,2026-06-24,2157
 L4,18c,BLD0816c,전략08(95%)+전략16(5%) 블렌딩 + 구별 트렌드,2235,confirmed,2026-06-24,2155
 L4,19,PSEUDO,Pseudo Labeling (안정3구) + 재학습 + 구별 트렌드,2247,dropped,2026-06-24,2173
+L1,4,BAGE,Building Age (거래시점 기준 Age),2447,tested,,
+L4,20,TSCV+STK,TimeSeriesSplit CB+LGB Ridge 스태킹 + 구별 트렌드,2420,tested,,
+L4,21,SW+STK,Sample Weight (대형+고에러구) CB+LGB Ridge 스태킹 + 구별 트렌드,2260,tested,,
+L4,22,KNN+STK,kNN 잔차 보정 + CB+LGB Ridge 스태킹 + 구별 트렌드,2234,tested,,
+L4,23,DA+STK,Domain Adaptation Weight + CB+LGB Ridge 스태킹 + 구별 트렌드,2234,tested,,
+L4,24,PL2+STK,Pseudo Label v2 (신뢰도 필터 30%) + Ridge 스태킹 + 구별 트렌드,2242,tested,,
+L4,24,PL2+STK,Pseudo Label v2 (신뢰도 필터 50%) + Ridge 스태킹 + 구별 트렌드,2226,tested,,
