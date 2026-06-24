@@ -18,3 +18,13 @@ L4,04,BL+DTR,CB+LGB 블렌딩 + 동별 트렌드 보정,2247,dropped,2026-06-22,
 L4,05,BL+RTR,CB+LGB 블렌딩 + 실제 2026 상승률 보정,2247,dropped,2026-06-22,2335
 L4,09,STK+EWMTR,CB+LGB Ridge 스태킹 + 구별 EWM 트렌드 보정,2234,dropped,2026-06-23,3154
 L4,10,STK+RLTR,CB+LGB Ridge 스태킹 + 외부 실거래 트렌드 보정,2234,dropped,2026-06-23,3021
+L4,11,META+CB,CatBoost 메타 스태킹 (OOF+원본피처) + 구별 트렌드,2273,dropped,,
+L4,12,STK+RFE,Ridge 스태킹 + 상대피처 (Area_vs_Gu 등) + 구별 트렌드,2269,dropped,,
+L4,13,STK+HBR,Huber Loss (CB+LGB) Ridge 스태킹 + 구별 트렌드,2298,dropped,,
+L4,14,RES,CatBoost 1차 + LightGBM 잔차 + 구별 트렌드,2255,dropped,,
+L4,15,STK+NN,CB+LGB+MLP Ridge 스태킹 + 구별 트렌드,2235,dropped,,
+L4,16,STK+GEO,CB+LGB Ridge 스태킹 + 지리피처 + 구별 트렌드,2237,dropped,2026-06-24,2178
+L4,18,BLD0816,전략08(70%)+전략16(30%) 블렌딩 + 구별 트렌드,2235,confirmed,2026-06-24,2159
+L4,18b,BLD0816b,전략08(85%)+전략16(15%) 블렌딩 + 구별 트렌드,2235,confirmed,2026-06-24,2157
+L4,18c,BLD0816c,전략08(95%)+전략16(5%) 블렌딩 + 구별 트렌드,2235,confirmed,2026-06-24,2155
+L4,19,PSEUDO,Pseudo Labeling (안정3구) + 재학습 + 구별 트렌드,2247,dropped,2026-06-24,2173
