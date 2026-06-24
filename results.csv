@@ -35,3 +35,5 @@ L4,22,KNN+STK,kNN 잔차 보정 + CB+LGB Ridge 스태킹 + 구별 트렌드,2234
 L4,23,DA+STK,Domain Adaptation Weight + CB+LGB Ridge 스태킹 + 구별 트렌드,2234,tested,,
 L4,24,PL2+STK,Pseudo Label v2 (신뢰도 필터 30%) + Ridge 스태킹 + 구별 트렌드,2242,tested,,
 L4,24,PL2+STK,Pseudo Label v2 (신뢰도 필터 50%) + Ridge 스태킹 + 구별 트렌드,2226,tested,,
+L4,25,SCALE+STK,Scale Blending (가중 평균 (원본 60%)) + 구별 트렌드,2226,tested,,
+L4,26,PL2+SCALE,PL2 + Scale Blending (방법B) + 구별 트렌드,2215,tested,,
