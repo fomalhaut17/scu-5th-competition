@@ -1,178 +1,247 @@
 # 제5회 인공지능 모델링 경진대회 - ChatGPT 전략 제안
 
-이 문서는 `GUIDE.md`, `gemini-Plan.md`, `results.csv`, `kaggle_notebooks/`, `strategies/`를 검토한 뒤 Claude가 바로 실행할 수 있도록 정리한 다음 전략이다.
+이 문서는 `GUIDE.md`, `results.csv`, `kaggle_notebooks/28_pl2_unit_price.py`, `kaggle_notebooks/32_multi_seed.py`, `strategies/_exceptions/32_multi_seed.py`를 기준으로 다시 작성한 전략 파트너 메모다. 실행 담당은 Claude이고, 여기서는 다음 실험의 방향과 우선순위를 제안한다.
 
-## 1. 현재 판단
+## 1. 현재 판세
 
-현재 확실한 기준점은 `08 STACK GU TREND`다.
+기준선은 더 이상 전략 08이나 26이 아니다. 현재 확정된 기준선은 **전략 28 `PL2+UNIT`**이다.
 
-- 구조: FE -> CatBoost(log) + LightGBM(log) -> Ridge stacking -> 구별 트렌드 보정
-- OOF: 2,234
-- Public: 2,155
-- 제출 이력상 트렌드 보정, 지리 피처, pseudo label 단독, 외부 실거래 보정, 복잡한 메타 모델은 대부분 Public에서 악화됐다.
+| 전략 | 내용 | OOF | Public | 판단 |
+|---|---|---:|---:|---|
+| 26 | PL2 + Scale Blending | 2,215 | 2,149.6 | PL2 효과 확인 |
+| 27 | 평당가 8모델 | 2,217 | 2,152.8 | 평당가 다양성 확인 |
+| 28 | PL2 + 평당가 8모델 Ridge | 2,196 | 2,096.8 | 현재 최선, 1위 탈환 |
+| 32 | 전략 28 multi-seed 평균 | 2,187 | 미확인 | 제출 후보, Public 검증 필요 |
 
-Gemini 제안의 핵심인 "원본 타겟 스케일 학습"과 "Scale Blending"은 이미 구현되어 있다.
+전략 28의 의미는 크다. 이전에는 PL2의 transductive bias를 경계해야 했지만, 26과 28의 Public 결과로 볼 때 이번 데이터에서는 PL2가 실제 리더보드에 유효했다. 다만 OOF와 Public의 관계가 비정상적으로 어긋나므로, 이후 판단 기준은 `OOF 개선폭`이 아니라 `전략 28 대비 예측 분포 변화가 납득 가능한가`가 되어야 한다.
 
-- `strategies/_exceptions/25_scale_blending.py`
-- `strategies/_exceptions/26_pl2_scale_blend.py`
-- `kaggle_notebooks/26_pl2_scale_blend.py`
-- `submission_l4_25_scale.csv`
-- `submission_l4_26_a.csv`
-- `submission_l4_26_b.csv`
-- `submission_l4_26_c.csv`
-- `submission_l4_26_pl2_scale.csv`
+현재 구조에서 성능을 만든 핵심은 네 가지다.
 
-결과 기록상 신규 최고 OOF는 `26 PL2+SCALE`이다.
+- **PL2**: 모델 간 합의도와 fold 변동성을 이용한 test 분포 적응.
+- **타겟 스케일 다양성**: log/raw의 편향 차이 활용.
+- **평당가(Target/Area)**: 단독 성능보다 기존 모델과의 오차 패턴 차이가 중요.
+- **Ridge 메타**: 단순 평균보다 작은 데이터에서 안정적으로 모델별 편향을 조절.
 
-| 전략 | 내용 | OOF | Public |
-|---|---|---:|---:|
-| 08 | 기존 최선 STK+GTR | 2,234 | 2,155 |
-| 24 | PL2 only | 2,226 | 미제출 |
-| 25 | Scale Blending | 2,226 | 미제출 |
-| 26 | PL2 + Scale Blending | 2,215 | 미제출 |
+## 2. 가장 중요한 해석
 
-## 2. 중요한 리스크
+전략 28은 단순히 좋은 모델을 하나 더 붙여서 이긴 것이 아니다. `가격 직접 예측`과 `평당가 예측 후 면적 환산`이 서로 다른 귀납 편향을 갖고 있고, PL2가 2026년 test 분포에 대한 약한 적응을 제공했기 때문에 이겼다.
 
-`26`의 OOF 2,215는 그대로 믿으면 안 된다. pseudo label을 붙인 뒤 augmented train 전체에 KFold를 섞고, 원본 train 영역만 잘라 OOF를 계산한다. 이 방식은 원본 train 검증 fold를 예측할 때 같은 fold의 pseudo-labeled test 샘플들이 학습 fold에 들어갈 수 있다. 직접적인 Target 누수는 아니지만, test 분포와 자기 예측값을 이용한 transductive regularization이라 OOF가 낙관적으로 보일 수 있다.
+따라서 다음 실험에서 피해야 할 실수는 "모델 수를 더 늘리면 좋아질 것"이라는 단순 확장이다. 이미 전략 29, 30, 31에서 확인했듯이 나쁜 다양성은 Ridge에 도움을 주지 않고 OOF만 흔들거나 편향을 키운다.
 
-예측 분포도 08과 매우 비슷하다.
+다음 개선은 세 방향 중 하나여야 한다.
 
-| 제출 파일 | 평균 | 표준편차 | 08 대비 corr | 08 대비 RMSE 차이 | 평균 차이 |
-|---|---:|---:|---:|---:|---:|
-| 08 | 40,416 | 9,884 | 1.00000 | 0 | 0 |
-| 24 | 40,523 | 9,949 | 0.99981 | 231 | +106 |
-| 25 | 40,278 | 9,681 | 0.99972 | 339 | -138 |
-| 26A | 40,298 | 9,687 | 0.99965 | 347 | -119 |
-| 26B/final | 40,305 | 9,669 | 0.99958 | 374 | -111 |
-| 26C | 40,386 | 9,787 | 0.99954 | 316 | -30 |
+1. 전략 28의 예측을 더 안정화한다.
+2. 전략 28의 특정 취약 구간만 아주 좁게 보정한다.
+3. 전략 28이 Public에서 먹힌 이유를 보존하면서 제출 후보를 여러 개 만든다.
 
-따라서 26은 OOF 개선 폭은 크지만, Public에서 08을 크게 이길 가능성과 약간 악화될 가능성이 같이 있다. 하루 제출 5회 제한이 있으므로 공격/방어 제출을 나눠야 한다.
+## 3. 제출 우선순위
 
-## 3. 다음 제출 우선순위
+### 1순위: 전략 32 제출
 
-### 1순위: `26C` 제출
-
-제출 파일: `submission_l4_26_c.csv`
+`kaggle_notebooks/32_multi_seed.py`는 현재 가장 자연스러운 다음 제출 후보다.
 
 이유:
-- `26` 계열 중 08 대비 평균 차이가 가장 작다. (-30)
-- 08 대비 RMSE 차이도 `26final/B`보다 작다. (316 vs 374)
-- pseudo label + scale 효과는 반영하면서, 08의 Public 최적점에서 덜 벗어난다.
-- Public shake-up 리스크가 가장 낮은 26 변형이다.
+- 전략 28의 구조를 유지하므로 이미 검증된 Public 방향을 크게 벗어나지 않는다.
+- OOF가 2,196에서 2,187로 9점 개선됐다.
+- 새 피처/새 타겟/새 보정이 아니라 seed 평균이므로 실패하더라도 파괴적일 가능성이 상대적으로 낮다.
 
-Kaggle 노트북으로 제출할 때는 `kaggle_notebooks/26_pl2_scale_blend.py`가 현재 final을 방법 B로 저장한다는 점에 주의한다. `submission_l4_26_c.csv`를 재현하려면 방법 C(Ridge stacking)를 최종 선택하도록 고정하거나, 로컬 생성 파일과 동일한 코드를 Kaggle 셀에 반영해야 한다.
+다만 제출 전 Claude가 반드시 확인할 것:
+- 전략 28 제출 파일과 전략 32 제출 파일의 `Target` 상관계수.
+- 평균, 표준편차, min/max, 구별 평균 차이.
+- 특히 Gangnam, Seocho, Yongsan, Seongdong에서 전략 28 대비 예측 평균이 과도하게 내려가지 않는지.
 
-### 2순위: `25 Scale Blending` 제출
+권장 게이트:
+- 전략 28 대비 corr >= 0.995면 제출 우선.
+- 전체 평균 차이가 ±0.5% 이내면 안정.
+- 고가 4구 평균이 전략 28보다 1% 이상 낮아지면 보수 블렌드로 전환.
 
-제출 파일: `submission_l4_25_scale.csv`
+### 2순위: 전략 28과 32의 방어 블렌드
 
-이유:
-- pseudo label 없이 raw/log target scale만 결합하므로 26보다 구조가 단순하다.
-- OOF 2,226으로 08보다 8 낮고, transductive 리스크가 없다.
-- 단점은 08 대비 평균이 -138, 고가 구간에서 낮아지는 경향이 있어 고가 과소예측 문제가 실제 Public에서 완화되는지 확인이 필요하다.
+전략 32가 OOF는 좋아도 Public에서 seed 평균이 고가 tail을 깎을 수 있다. 따라서 단일 32와 함께 아래 방어 후보를 준비한다.
 
-### 3순위: `24 PL2 only` 제출
+- `28:32 = 50:50`
+- `28:32 = 70:30`
+- `28:32 = 30:70`
 
-제출 파일: `submission_l4_24_pl2.csv`
+추천 순서:
+1. 32 단일
+2. 28:32 = 50:50
+3. 28:32 = 30:70
 
-이유:
-- 25와 같은 OOF 2,226이지만 평균은 08보다 +106으로 올라간다.
-- 기존 19 pseudo label은 Public이 2,173으로 악화됐지만, 24는 신뢰도 필터가 더 정교하다.
-- 25가 평균을 낮추는 방향, 24는 평균을 높이는 방향이라 리더보드 반응 비교 가치가 있다.
+32가 Public에서 28보다 좋으면 30:70 또는 20:80 쪽으로 좁힌다. 32가 나쁘면 70:30만 방어선으로 남긴다.
 
-### 4순위: `26B/final` 제출
+### 3순위: PL 신뢰도 threshold 미세 조정
 
-제출 파일: `submission_l4_26_pl2_scale.csv` 또는 `submission_l4_26_b.csv`
+전략 28의 PL threshold는 상위 50%다. 이 값은 성공했지만 최적이라고 보장할 수 없다. 다만 넓은 탐색은 위험하다.
 
-이유:
-- 기록상 `26`의 대표 산출물이며 OOF 2,215다.
-- 다만 08 대비 평균 -111, 고가 구에서 낮추는 폭이 크다. 특히 Gangnam -353, Seocho -159, Yongsan -234 수준이라 Public에서 고가 과소예측이 문제였다면 불리할 수 있다.
+Claude 작업:
+- `PL top 40%`
+- `PL top 50%`
+- `PL top 60%`
 
-### 5순위: 방어용 08 재제출 또는 26C와 08의 미세 블렌드
+세 개만 비교한다. 30%/70% 이상으로 넓히면 전략이 바뀌고 리더보드 리스크가 커진다.
 
-08이 이미 Public 2,155라 재제출 자체는 순위 개선 목적은 약하다. 남은 제출권이 있다면 `08 70% + 26C 30%` 또는 `08 50% + 26C 50%`를 추천한다.
+판단 기준:
+- OOF보다 예측 분포를 우선 본다.
+- 40%는 보수형, 60%는 공격형으로 본다.
+- 50% 대비 평균이 크게 흔들리지 않으면서 OOF가 개선되는 쪽만 제출한다.
 
-이유:
-- 18 계열에서 08+16 블렌드는 08 비중이 높을수록 안정적이었다.
-- 26C는 08과 다르지만 과격하지 않다.
-- 단일 26C가 흔들릴 경우 중간 제출이 방어선이 된다.
+## 4. 새로 제안하는 고급 실험
 
-## 4. Claude 작업 지시
+### A. Meta 입력에 "모델 예측의 구조적 요약" 추가
 
-### A. 제출 전 스크립트 정리
+현재 Ridge는 8개 base prediction만 입력으로 사용한다. 원본 피처를 넣는 CatBoost meta는 실패했지만, 원본 피처 전체가 아니라 8개 예측의 요약 통계만 추가하는 것은 다른 실험이다.
 
-`kaggle_notebooks/26_pl2_scale_blend.py`를 복사해서 다음 파일을 만들 것을 권장한다.
+추가 후보:
+- 8모델 예측 평균
+- 8모델 예측 표준편차
+- base 4모델 평균과 unit 4모델 평균의 차이
+- raw 평균과 log 평균의 차이
+- unit 평균 / base 평균 비율
 
-- `kaggle_notebooks/27_pl2_scale_ridge.py`
+의도:
+- Ridge가 "어떤 샘플에서 모델들이 disagreement하는지"를 알게 한다.
+- 원본 피처를 넣지 않으므로 CatBoost meta처럼 과적합 위험이 크지 않다.
 
-수정 내용:
-- PL 상위 50% 고정
-- 최종 방법을 C(Ridge stacking)로 고정
-- 출력 파일은 Kaggle 표준 `submission.csv`
-- 로그에 다음 값 출력
-  - Stage 1 4모델 평균 OOF
-  - PL 선택 건수
-  - Stage 2 A/B/C OOF
-  - 최종 선택 방법
-  - 08 대비 예측 평균 차이, 표준편차 차이
+구현 방식:
+- 기존 8개 예측 + 위 요약 5개 = 13개 입력.
+- 메타는 계속 Ridge 또는 ElasticNet만 사용.
+- CatBoost/LightGBM meta 금지.
 
-### B. 리더보드 결과 기록
+제출 조건:
+- OOF 개선이 5점 이상이고, 전략 28 대비 예측 corr >= 0.995.
 
-제출 후 `results.csv`에 반드시 public_rmse를 기록한다.
+### B. 구별 Ridge 메타의 부분 적용
 
-추천 기록명:
+구별 가중치를 전부 따로 최적화하면 작은 구에서 과적합 위험이 높다. 대신 전체 Ridge 예측을 기본으로 두고, 오차가 큰 구에만 별도 보정 메타를 적용한다.
 
-- `L4,27,PL2+SCALE+C,PL2 + Scale Blending + Ridge final + GTR`
-- `L4,25,SCALE+STK`
-- `L4,24,PL2+STK`
+대상 후보:
+- Gangnam-gu
+- Seongdong-gu
+- Yongsan-gu
+- Seocho-gu
 
-### C. OOF 신뢰도 보강
+방법:
+1. 전략 28의 8개 OOF prediction을 만든다.
+2. 전체 Ridge 예측을 만든다.
+3. 위 4개 구에 대해서만 구별 Ridge를 따로 학습한다.
+4. 전체 Ridge와 구별 Ridge를 `0.8:0.2`, `0.7:0.3` 정도로 섞는다.
 
-시간이 있으면 새 전략 구현보다 검증 보강을 먼저 한다.
+핵심은 "구별 모델로 완전히 교체하지 않는 것"이다. 데이터가 작기 때문에 구별 최적 가중치는 리더보드에서 쉽게 과적합된다. 부분 적용만 허용한다.
 
-필수 검증:
-- `08`, `24`, `25`, `26A/B/C`를 같은 OOT split에서 비교
-- holdout_months를 2, 3, 4로 바꿔 반복
-- 보정 없음/GTR 적용 후를 분리해서 비교
+### C. 고가 tail 전용 shrink 방지 보정
 
-목표:
-- 26 계열이 random OOF에서만 좋은지, 시간 holdout에서도 08보다 덜 나쁜지 확인한다.
-- OOT에서 계속 08보다 나쁘면 Public 제출 우선순위를 낮춘다.
+전략 28의 성공 이후에도 고가/대형 과소예측은 남아 있을 가능성이 높다. 다만 사후 보정은 매우 위험하므로 조건부로만 적용한다.
 
-### D. 26 OOF 계산 방식 개선
+추천 방식:
+- test 예측값 기준 상위 10%만 대상으로 한다.
+- 전체를 곱하지 말고, 전략 28과 raw 계열 평균 사이의 차이를 이용한다.
+- `final = ridge + lambda * max(0, raw_mean - ridge)` 형태로 보정한다.
 
-현재 26의 OOF는 낙관 가능성이 있다. 더 보수적인 측정 방식을 별도 스크립트로 만든다.
+실험 lambda:
+- 0.05
+- 0.10
+- 0.15
 
-권장 방식:
-1. 원본 train을 outer 5-fold로 나눈다.
-2. 각 outer fold에서 train 부분만 사용해 Stage 1 pseudo label을 만든다.
-3. 그 pseudo label을 outer train에만 붙여 Stage 2 모델을 학습한다.
-4. outer validation 원본 train을 예측한다.
-5. 5개 outer validation 예측을 합쳐 OOF를 계산한다.
+의도:
+- raw 모델이 더 높게 보는 고가 샘플에서만 Ridge shrink를 약하게 풀어준다.
+- 모든 고가를 일괄 상향하는 piecewise correction보다 리스크가 낮다.
 
-이 OOF가 08보다 유지되면 26은 실제 개선 가능성이 높다. 여기서 무너지면 Public 개선은 운에 가깝다.
+제출 조건:
+- OOF 상위 가격 구간 RMSE가 개선되어야 한다.
+- 전체 OOF 악화가 3점 이내여야 한다.
+- test 상위 10% 평균 상승폭이 1%를 넘으면 제출하지 않는다.
 
-## 5. 새 모델보다 우선할 것
+### D. PL 라벨을 단일 평균이 아니라 trimmed mean으로 생성
 
-현재까지 실패한 방향은 반복하지 않는다.
+현재 pseudo label은 4모델 평균이다. 모델 하나가 특정 test 샘플에서 튀면 PL 라벨이 오염될 수 있다.
 
-- 동별/외부 트렌드 보정 재시도 금지
-- 지리 피처 추가 재시도 금지
-- XGB/MLP 추가 금지
-- 복잡한 메타 모델 금지
-- residual model 재시도 금지
-- Huber/sample weight 대형 실험은 낮은 우선순위
+대안:
+- 4개 prediction 중 min/max를 제외한 2개 평균.
+- 또는 median.
 
-남은 개선 여지는 모델 복잡도가 아니라 제출 선택과 검증 신뢰도에 있다.
+실험:
+- `PL label = mean`
+- `PL label = median`
+- `PL label = trimmed mean`
 
-## 6. 최종 추천
+PL 선별 confidence는 기존 방식을 유지하고, 라벨 산출 방식만 바꾼다. 이렇게 해야 실험 변수가 하나로 제한된다.
 
-오늘 제출권이 5개라면 다음 순서로 쓴다.
+제출 조건:
+- 전략 28 대비 OOF가 동등 이상.
+- 예측 평균이 전략 28 대비 ±0.3% 이내.
 
-1. `26C` 또는 이를 재현하는 `27_pl2_scale_ridge.py`
-2. `25 Scale Blending`
-3. `24 PL2 only`
-4. `08 50% + 26C 50%`
-5. `08 70% + 26C 30%`
+## 5. 하지 말아야 할 것
 
-리더보드에서 26C가 08보다 좋아지면, 다음 날은 26C 주변의 blend 비율만 좁게 탐색한다. 예를 들어 `08:26C = 30:70`, `20:80`, `10:90`. 26C가 나빠지면 pseudo label 계열은 중단하고 25와 08 사이의 scale-only 방어 블렌드만 확인한다.
+다음은 추가 실험 가치가 낮다.
+
+- 동별/EWM/외부 트렌드 보정 재시도.
+- 외부 실거래가 직접 보정.
+- XGBoost, MLP, 복잡한 meta model 추가.
+- 원본 피처를 meta model에 직접 투입.
+- 반복 PL 2회 이상.
+- 층당가, sqrt target, 면적층가 등 이미 실패한 타겟 변환 재시도.
+- TimeSeriesSplit을 주 제출 모델로 사용.
+- 큰 sample weight, Huber loss, residual model 재시도.
+
+현재 리더보드에서는 새로운 아이디어의 크기보다 기존 성공 구조를 얼마나 덜 망가뜨리는지가 중요하다.
+
+## 6. Claude에게 주는 실행 지시
+
+### Step 1. 전략 32 제출 전 진단표 생성
+
+전략 28과 32의 제출 예측을 비교하는 작은 스크립트를 만든다.
+
+출력:
+- corr
+- RMSE distance
+- mean/std/min/max
+- 구별 mean 차이
+- 예측 상위 10%, 20%의 mean 차이
+- 면적 120㎡ 이상 샘플의 mean 차이
+
+이 진단표를 본 뒤 32 단일 제출 여부를 결정한다.
+
+### Step 2. 28/32 블렌드 파일 3개 생성
+
+생성 후보:
+- `submission_l4_33_blend_28_32_7030.csv`
+- `submission_l4_33_blend_28_32_5050.csv`
+- `submission_l4_33_blend_28_32_3070.csv`
+
+전략 32가 단일 제출로 흔들릴 때를 대비한 방어 후보로 쓴다.
+
+### Step 3. PL threshold 40/50/60만 실험
+
+전략 28 스크립트를 복사해 threshold만 파라미터화한다.
+
+추천 파일:
+- `strategies/_exceptions/33_pl_threshold.py`
+- `kaggle_notebooks/33_pl_threshold.py`
+
+비교 결과는 OOF와 함께 전략 28 대비 예측 분포를 반드시 기록한다.
+
+### Step 4. Meta 요약 통계 실험
+
+추천 파일:
+- `strategies/_exceptions/34_meta_summary.py`
+
+Ridge 입력을 8개 base prediction에서 13개 prediction-summary feature로 확장한다. 이 실험은 신규 모델을 추가하지 않으면서 disagreement 정보를 쓰는 방식이라 가장 품질 높은 다음 연구축이다.
+
+## 7. 최종 추천
+
+오늘 제출권이 있다면 아래 순서가 가장 합리적이다.
+
+1. 전략 32 단일 제출
+2. 전략 28:32 = 50:50
+3. 전략 28:32 = 30:70
+4. PL threshold 40% 또는 60% 중 진단표가 좋은 쪽
+5. Meta summary Ridge가 OOF와 분포 진단을 모두 통과하면 제출
+
+제출 후 해석:
+- 32가 28보다 개선되면 다음 날은 multi-seed를 기준선으로 올리고 blend 비율만 좁힌다.
+- 32가 악화되면 seed 평균은 Public tail을 깎은 것으로 보고 28 기준선으로 복귀한다.
+- threshold 실험이 먹히면 PL 최적화가 남은 개선축이다.
+- meta summary가 먹히면 이후에는 모델 추가보다 prediction-level feature engineering을 계속 판다.
+
+현재 가장 좋은 전략적 태도는 공격적 확장이 아니라 **전략 28의 성공 원리를 보존한 미세 개선**이다. 이미 1위를 탈환했으므로, 다음 목표는 큰 구조 변경으로 50점을 노리는 것이 아니라 Public에서 5~20점을 안정적으로 더 줄이는 것이다.

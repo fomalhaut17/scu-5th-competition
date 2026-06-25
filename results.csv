@@ -42,3 +42,8 @@ L4,28,PL2+UNIT,PL2 + 평당가 크로스 (PL2 8모델 Ridge(α=10.0)) + GTR,2196
 L4,29,TGT TRANSFORMS,타겟 변환 다양성 (8+sqrt (α=10.0)),2224,tested,,
 L4,30,ITER PL,Iterative PL R1 + 8모델 Ridge + GTR,2196,tested,,
 L4,31,FEAT DIVERSITY,피처셋 변형 다양성 (8+핵심만 (α=10.0)),2229,tested,,
+L4,32,MULTI SEED,전략28 × 4시드 평균 + GTR,2187,tested,,
+L4,33,META SUMMARY,Meta 요약 통계 (8입력 Ridge) + GTR,2196,tested,,
+L4,34,TREND ALPHA,트렌드 보정 강도 최적화 (alpha sweep),2194,tested,,
+L4,35,QUANTILE ENS,RMSE 8모델 + Quantile 10모델 Ridge(α=100.0) + GTR,2236,tested,,
+L4,36,GU SPLIT,구별 독립 파이프라인 (전체),2198,tested,,
