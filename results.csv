@@ -39,3 +39,6 @@ L4,25,SCALE+STK,Scale Blending (가중 평균 (원본 60%)) + 구별 트렌드,2
 L4,26,PL2+SCALE,PL2 + Scale Blending (방법B) + 구별 트렌드,2215,tested,,
 L4,27,UNIT PRICE,평당가 예측 (8모델 단순평균) + 구별 트렌드,2217,tested,,
 L4,28,PL2+UNIT,PL2 + 평당가 크로스 (PL2 8모델 Ridge(α=10.0)) + GTR,2196,tested,,
+L4,29,TGT TRANSFORMS,타겟 변환 다양성 (8+sqrt (α=10.0)),2224,tested,,
+L4,30,ITER PL,Iterative PL R1 + 8모델 Ridge + GTR,2196,tested,,
+L4,31,FEAT DIVERSITY,피처셋 변형 다양성 (8+핵심만 (α=10.0)),2229,tested,,
