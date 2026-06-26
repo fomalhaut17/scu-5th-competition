@@ -1,97 +1,83 @@
-# Gemini Advisor Report (2026-06-26)
+# Gemini Advisor Report (2026-06-27)
 
 ## Executive Summary
 
-현재 상황은 **"모델링의 한계(Noise Floor)에 근접한 상태에서, 합성 데이터의 특성을 이해하고 안정적인 Final Submission을 준비해야 하는 단계"**입니다. 
-전략 28이 Public 1위(2,096.8)를 기록하고 있지만, 이는 OOF(2,196) 대비 상당히 높은 성적(100점 개선)이므로, Public LB의 특성(혹은 데이터의 분포)이 OOF와 다를 수 있음을 인지해야 합니다. 
+현재 상황은 **전략 45 (10모델 Ridge 스태킹)**를 통해 **Public RMSE 2,094.9 (4위)**를 달성하며 최상위권 경쟁에 본격적으로 진입한 상태입니다. 
 
-이미 많은 방향(트렌드, 타겟 변환, 피처 변형 등)을 소진했으므로, 이제는 **'새로운 피처'를 찾는 것보다 '현재 모델의 조합(Ensemble)을 어떻게 구성할 것인가'와 '합성 데이터의 노이즈를 어떻게 견딜 것인가'**에 집중해야 합니다.
+우리가 발견한 핵심 돌파구는 **"성능이 아주 뛰어나진 않더라도, 기존 트리 모델(CatBoost/LGBM)과 상관관계가 낮아 오차를 상쇄해 줄 수 있는 알고리즘 다양성의 확보"**입니다. 단독 OOF 3,561인 ExtraTrees가 앙상블에서 -3점의 실질적 개선을 이끌어낸 것이 이를 증명합니다.
 
----
-
-## Q1. 구조적 돌파구: RMSE를 더 줄일 수 있는 방향
-
-전략 28(8모델 Ridge)이 최적점에 도달했다면, 이제는 '개별 모델의 성능'이 아닌 **'모델 간 오차의 독립성(Error Decorrelation)'**을 극대화하는 방향으로 가야 합니다.
-
-1. **Target-Aware Cross-Blending (Target-Space Diversification)**
-   - 현재는 `log`와 `raw` 스케일, 그리고 `Unit Price`를 사용 중입니다. 
-   - **아이디어**: 단순히 타겟을 바꾸는 게 아니라, **'예측 대상의 성격'**을 분리합니다.
-     - 모델 A: 전체 가격 예측 (Total Price)
-     - 모델 B: 면적 대비 가격 예측 (Unit Price)
-     - 모델 C: 층수에 따른 프리미엄 예측 (Floor-adjusted Price)
-   - 이를 각각 학습시킨 후, Ridge 스태킹 시 입력 피처로 사용하는 것이 아니라, **각 모델의 결과물(Prediction)을 입력으로 하는 스태킹**을 수행하되, 모델들이 서로 다른 '관점'을 갖도록 강제해야 합니다.
-
-2. **Extremely Shallow Meta-Learners (Information Compression)**
-   - 2단 스태킹(전략 40)이 실패한 이유는 메타 모델(LGB)이 8개의 입력 사이의 비선형성을 찾으려다 과적합되었기 때문입니다.
-   - **돌파구**: 메타 모델을 '예측'하는 용도가 아니라, **'모델별 신뢰도(Weight)를 동적으로 결정'**하는 용도로 사용합니다.
-   - 예를 들어, `Gu`(구)나 `Dong`(동) 정보를 메타 모델의 입력으로 넣어, "강남구에서는 모델 A가 더 잘 맞고, 성동구에서는 모델 B가 더 잘 맞는다"는 식의 **Local Weighting**을 수행합니다. (이미 Ridge 스태킹에서 구별 트렌드 보정을 하고 있지만, 이를 모델 가중치 레벨에서 수행하는 것입니다.)
-
-3. **Denoising Autoencoder (DAE) 기반 피처 추출**
-   - 데이터가 합성 데이터라면, 특정 생성 알고리즘(Generator)에 의한 패턴이 존재할 것입니다.
-   - **아이디어**: 데이터의 노이즈 구조를 학습하기 위해, 입력 피처에 인위적인 노이즈를 섞은 후 원래 값을 복원하도록 학습하는 DAE를 사용합니다. 이 과정에서 추출된 Latent Feature는 단순한 피처보다 데이터의 '구조적 본질'을 더 잘 담을 수 있습니다.
+남은 기간 동안 1~3위와의 격차를 좁혀 우승을 노리기 위한 핵심 테마는 **1) 알고리즘 다양성의 한계 확장**, **2) 합성 데이터 생성 규칙(DGP)의 수학적 역공학**, **3) 고오차 타겟 영역(대형/고가) 집중 방어**입니다.
 
 ---
 
-## Q2. Private LB 방어 및 Final Submission 구성
+## Q1. ExtraTrees 원리의 확장: "다양성"을 극대화할 수 있는 대체 알고리즘
 
-Public 1위는 매우 달콤하지만 위험합니다. OOF와 Public의 갭(100점)은 **'Public LB가 특정 패턴(예: 특정 구, 특정 가격대)에 편향되어 있음'**을 강력하게 시사합니다.
+ExtraTrees가 유일하게 성공한 이유는 **"의사결정 나무의 분기점(Split)을 무작위로 선택하여 개별 트리의 편향은 유지하되, 앙상블을 통해 예측치 표면을 고도로 스무딩(Smoothing)하고 오차 패턴의 상관성을 낮췄기 때문"**입니다. 이와 동일한 효과(Smoothness + Low Correlation)를 낼 수 있는 미시도/확장 알고리즘을 제안합니다.
 
-1. **위험 분석**
-   - **위험 요소**: 만약 Public LB가 `PL2`나 `Unit Price` 모델이 잘 맞추는 특정 패턴에 과하게 최적화되어 있다면, Private에서는 이 모델들의 오차가 폭발할 수 있습니다.
-   - **방어 전략**: **'다양성(Diversity) vs 성능(Performance)'**의 트레이드오프를 관리해야 합니다.
+### 1. LightGBM의 ExtraTrees 모드 (`extra_trees=True`)
+- **원리**: LightGBM 내부에 Scikit-learn의 ExtraTrees와 동일하게 무작위 분기를 수행하는 하이퍼파라미터가 존재합니다.
+- **적용**: 기존 LGBM raw/log 모델 외에, `extra_trees=True`와 `colsample_bytree`, `subsample`을 극단적으로 낮춘(예: 0.5~0.6) **LGB-ET 모델**을 추가합니다. CB/LGBM의 학습 속도와 강력함을 유지하면서도 ExtraTrees 수준의 이질적인 오차 패턴을 생성합니다.
 
-2. **Final Submission 구성 (2개 추천)**
+### 2. 데이터 크기(1,969건)를 저격하는 커널 모델 (Kernel Ridge & GPR)
+- 일반적인 정형 데이터 대회와 달리, 본 대회는 **샘플 수(Train 1,969건)가 극도로 적습니다.** 이 크기에서는 딥러닝이나 복잡한 모델보다 **커널(Kernel) 기반 보간 모델**이 압도적인 성능과 완전히 독자적인 오차 패턴을 보입니다.
+- **Kernel Ridge Regression (KRR)**: RBF 커널을 사용하여 피처 간 비선형 관계를 고차원으로 투사해 학습합니다. SVR보다 하이퍼파라미터 정규화가 안정적이며, 트리 모델의 계단식(Step-like) 예측과 달리 고도로 부드러운 연속적인 예측값을 제공합니다.
+- **Gaussian Process Regression (GPR)**: 예측값뿐만 아니라 예측의 불확실성(Variance)까지 함께 계산합니다. GPR의 예측 평균값은 소량 데이터에서 매우 정교한 보간 성능을 보이며, Ridge 스태킹 시 트리 모델의 과적합을 상쇄하는 강력한 파트너가 됩니다.
 
-   - **[Submission 1] 공격적/최적화형 (The Winner)**
-     - **구성**: 현재 최선인 **전략 28 (PL2 + Unit Price 8-model Ridge)**.
-     - **목표**: Public LB의 패턴을 그대로 따라가며 1위를 유지하거나 더 높임.
-     - **비중**: 100% 전략 28.
-
-   - **[Submission 2] 보수적/안정형 (The Safe Bet)**
-     - **구성**: **전략 08 (Original 4-model + Scale Blend) 기반의 앙상블**.
-     - **목표**: PL2나 Unit Price 모델이 가질 수 있는 '합성 데이터 특화 편향(Transductive Bias)'을 제거하고, 가장 기본적이고 일반화 능력이 검증된 모델들의 조합을 사용.
-     - **방법**: 
-       - PL2를 제외한 `Scale Blend` 모델들과 `Original Ridge` 모델을 7:3 또는 6:4로 블렌딩.
-       - 혹은, `α=0.9` 수준의 보수적인 트렌드 보정 적용.
-
-**결론**: 1개는 현재의 '최고점'을, 1개는 '가장 검증된 기본기'를 제출하여 리스크를 분산하십시오.
+### 3. Spline Feature + 선형 Regularization (비트리 비선형 보간)
+- 단순히 다항식 피처(`Ridge-poly`)를 적용하는 것은 차원의 저주와 이상치 폭발로 인해 실패하기 쉽습니다.
+- **대안**: Scikit-learn의 `SplineTransformer`를 사용하여 연속형 변수(`Area`, `YearMonth_Seq` 등)를 구간별 3차 스플라인 곡선 피처로 변환한 뒤, `BayesianRidge`나 `ElasticNet`으로 학습합니다.
+- **효과**: 구간별 비선형 트렌드를 트리 모델과 전혀 다른 수학적 방식으로 학습하므로, 앙상블 다양성이 극대화됩니다.
 
 ---
 
-## Q3. 남은 12일 활용법
+## Q2. 1~3위와의 격차를 줄이는 전략 (Top-tier 분석)
 
-이미 많은 것을 시도했습니다. 이제는 **'확장'보다는 '정교화(Refinement)'**의 시간입니다.
+현재 4위에서 1~3위로 올라서기 위해 상위 팀들이 썼을 것으로 판단되는 3가지 유력한 접근법입니다.
 
-1. **(1~3일차) Submission 2 후보 탐색 (Stability Check)**
-   - PL2와 Unit Price를 제외했을 때, 가장 안정적인(OOT와 OOF의 괴리가 적은) 조합을 찾습니다. 
-   - "어떤 모델을 뺐을 때 Private에서 뒤집힐 가능성이 가장 낮은가?"를 찾는 과정입니다.
+### 1. 합성 데이터 생성기(DGP)의 수학적 역공학 (가장 유력)
+- 이 데이터는 100% 합성 데이터이므로, 특정 수학적 공식과 분포(예: Gaussian, Lognormal)에 의해 생성되었습니다.
+- **상위권의 비밀**: 현실 부동산과 달리 합성 데이터는 **Multiplicative(곱셈적)** 관계가 극도로 뚜렷할 확률이 높습니다.
+  - 예: $Price = BasePrice(Gu) \times AreaFactor(Area) \times FloorPremium(Floor) \times Trend(YearMonth) + Noise$
+  - 만약 생성기가 이런 구조라면, 우리가 피처를 더하는 방식(`Area_x_Floor`, `Brand_x_Area`)으로는 완벽한 모사가 어렵습니다.
+  - **해결책**: 모든 피처와 타겟을 Log 변환하여 **가법적(Additive) 구조**로 변환한 뒤 선형 회귀 계수를 역추적하거나, 곱셈 관계를 직접 피처(예: $Area \times Floor \times BrandScore$)로 인코딩하여 트리 모델의 학습 부담을 극도로 덜어주어야 합니다.
 
-2. **(4~7일차) Error Pattern Deep Dive (Residual Analysis)**
-   - 현재 모델이 틀리는 데이터(OOF 상위 오차)를 다시 분석합니다.
-   - 단순한 이상치(성동구 사례)인지, 아니면 특정 조건(예: '신축 대형 평수')에서의 구조적 결함인지 구분합니다.
-   - 만약 구조적 결함이라면, 그 조건에만 특화된 **'Micro-Model'**을 만들어 블렌딩에 추가합니다.
+### 2. 고오차 타겟 영역(대형/고가)의 "분할 스태킹" 또는 "국소 가중치"
+- 에러 분석 결과, 120㎡ 이상 대형(상위 11% 오차), 6~8억 고가, 강남/성동/용산구의 오차가 전체 RMSE를 지배하고 있습니다.
+- **상위권의 비밀**: 일반적인 Ridge 스태킹은 전체 영역의 MSE를 고르게 줄이려 하지만, 상위권은 **오차가 큰 고가/대형 영역에 가중치를 주는 특화 학습(Sample Weighted Ridge)**을 적용했거나, 가격대를 예측하는 분류 모델을 Stage 0로 두고 "대형/고가 전용 Ridge"와 "일반 영역 Ridge"를 따로 앙상블하는 **Local Weighting**을 구축했을 것입니다.
 
-3. **(8~12일차) Final Ensemble & Submission Management**
-   - 하루 5회 제출권을 아껴서, 위에서 찾은 후보들을 정교하게 섞는 실험에 사용합니다.
-   - 마지막 2일은 새로운 실험을 멈추고, 확정된 전략들의 최종 제출 파일 생성 및 검증에만 집중합니다.
+### 3. 정교한 Transductive Pseudo-Labeling & Target Matching
+- 1~3위는 Test 데이터셋의 피처 분포를 완벽하게 활용하여 Train 모델과의 괴리를 줄였을 것입니다.
+- 우리는 PL2에서 신뢰도 50% 필터링을 썼지만, 그들은 Test 예측값의 평균과 분산이 Train의 최신 트렌드(OOT) 분포와 정확히 일치하도록 조율하는 **Distribution Calibration**이나, Adversarial Validation 분류기의 가중치를 Inverse Probability Weighting(IPW)으로 학습에 녹여 넣었을 가능성이 큽니다.
 
 ---
 
-## Q4. 합성 데이터 역이용: 생성 패턴 추적
+## Q3. 전략 45 기반 Final Submission 시나리오
 
-데이터가 100% 합성이라는 점은, 이 데이터가 **'확률 분포(Distribution)'가 아닌 '함수(Function)'**에 의해 생성되었을 가능성을 의미합니다.
+전략 45가 새로운 최선(Public 2,094.9)이 되었지만, Private LB에서 순위 하락(Shake-down)을 막기 위해 2개의 최종 제출은 극명하게 다른 가치를 지향해야 합니다.
 
-1. **Generator Signature 탐색**
-   - 실제 데이터와 합성 데이터의 분포 차이를 분석하여, 생성기가 어떤 'Rule'을 따르는지 역추적합니다.
-   - 예를 들어, `Area`와 `Price`의 관계가 단순 선형인지, 아니면 특정 `Floor`나 `Year_Built`에 따라 불연속적인 계단식 함수(Step function)를 갖는지 확인합니다. 
-   - 만약 계단식 패턴이 있다면, 이를 피처로 만드는 것이 아니라 **모델의 Loss Function에 반영(Custom Loss)**하거나, **Decision Tree의 분기점**을 찾는 데 활용할 수 있습니다.
+### Final Submission 1: 공격형 / 최고 성능 지향 (The Winner)
+*   **대상**: **전략 45 기반 미세 보정본 (또는 개선된 10모델+α 스태킹)**
+*   **이유**: Public 4위까지 이끌어준 동력이므로, 이를 폐기하는 것은 손해입니다. Public LB의 트렌드가 Private과 상당히 공유된다는 가정하에 가장 공격적인 조합으로 우승을 노립니다.
+*   **보완 전략**: 
+    - 트렌드 보정 강도 `α=1.0`을 유지하되, 고가 영역(예: 예측가 5억 이상)에서 트리 모델의 과소예측 편향을 미세하게 보정하는 사후 함수(Post-processing Multiplier)를 적용합니다.
 
-2. **Noise Structure Analysis (Error Modeling)**
-   - 합성 데이터의 노이즈는 무작위(White Noise)가 아니라, 생성 알고리즘의 한계에서 오는 **'구조적 노이즈(Structured Noise)'**일 확률이 높습니다.
-   - OOF 오차의 분포가 특정 피처(예: `Year_Built`)와 상관관계가 있는지 확인하십시오. 
-   - 만약 상관관계가 있다면, 그 노이즈 자체를 예측하는 **'Noise Predictor'**를 만들어 최종 예측값에서 빼주는 방식(Residual-based Denoising)을 고려해 볼 수 있습니다.
+### Final Submission 2: 보수형 / 안정적 일반화 지향 (The Safe Bet)
+*   **대상**: **[전략 08 (Original 4모델) + ExtraTrees 2모델 + KRR/LGB-ET] 의 Multi-Seed 앙상블 (PL2 배제)**
+*   **이유**: Pseudo-Labeling(PL2)은 Public LB 점수를 크게 올리지만, Test 데이터의 가짜 라벨을 재학습하므로 **Private Test 데이터셋의 숨겨진 분포가 다를 경우 오차가 기하급수적으로 폭발(Overfitting to Public)**할 위험이 존재합니다.
+*   **구성 방법**:
+    - 의도적으로 PL2(의사 라벨링)을 완전히 제거한 모델셋을 구성합니다.
+    - Public에서 비록 손해를 보더라도(예: Public 2,100대 수준), **Multi-Seed (4개 시드 이상) 평균**을 적용하여 모델의 분산을 제안하고 일반화 성능을 극대화합니다.
+    - 이 방식은 합성 데이터의 무작위 노이즈를 완벽하게 스무딩하여 Private에서 상위권 팀들이 과적합으로 무너질 때 순위가 수직 상승하는 **최후의 방어선** 역할을 수행합니다.
 
-3. **Adversarial Validation (Train vs Test)**
-   - Train과 Test를 구분하는 분류기(Classifier)를 만들어 봅니다.
-   - 만약 이 분류기가 매우 높은 성능을 보인다면, Train과 Test의 분포가 심각하게 다르게 생성된 것입니다.
-   - 이 분류기가 중요하게 사용하는 피처가 바로 **'합성 데이터의 생성 규칙'**이 담긴 핵심 피처입니다. 이 피처를 중심으로 모델을 재구성하십시오.
+---
+
+## Action Plan (남은 12일 전략)
+
+1.  **DGP 역공학 실험 (1~2일)**:
+    - Log-scale 선형 회귀와 의사 결정 나무 분기점 분석을 통해 `Area`, `Floor`, `Gu` 간의 곱셈적 규칙성이 존재하는지 수식화 및 피처화 진행.
+2.  **알고리즘 다양성 확장 (3~5일)**:
+    - LGBM `extra_trees=True` 및 Scikit-learn `KernelRidge` (RBF 커널) 로컬 검증 및 앙상블 추가 실험.
+3.  **Local Weighting / Specialized Ridge (6~8일)**:
+    - 대형 평수(Area >= 120) 및 강남/성동/용산구 전용 Sample Weight를 스태킹 Ridge에 반영하는 실험.
+4.  **최종 2개 제출 셋팅 및 검증 (9~12일)**:
+    - 1번(PL2 포함 최적화)과 2번(PL2 배제, 멀티시드 스무딩 일반화)의 최종 추론 스크립트 완성 및 무결성 확인.

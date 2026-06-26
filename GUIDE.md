@@ -11,19 +11,22 @@
 
 ## 현재 최선 전략
 
-**전략 45: ET EXPAND** (Public RMSE **2,094.9**, 4위, 2026-06-26)
+**전략 47: LGB-ET** (Public RMSE **2,090.9**, 4위, 2026-06-27)
 
 ```
 FE → 4모델 Stage1 → PL 신뢰도 필터(50%) → 데이터 증강
-→ 기존 4모델(CB/LGB × log/raw) + 평당가 4모델(Target/Area) + ExtraTrees 2모델(log/raw) = 10모델
-→ Ridge(α=10) 스태킹 → 구별 트렌드 보정
+→ 기존 4모델(CB/LGB × log/raw) + 평당가 4모델(Target/Area)
+  + ExtraTrees 2모델(log/raw) + LGBM extra_trees 2모델(log/raw) = 12모델
+→ Ridge 스태킹 → 구별 트렌드 보정
 ```
 
-- Kaggle 노트북: `kaggle_notebooks/45_et_expand.py`
-- OOF RMSE: 2,193 (전략 28의 2,196에서 -3)
-- 핵심: ExtraTrees의 알고리즘 다양성 — 트리 모델이지만 랜덤 분기점 사용으로 CB/LGB와 다른 오차 패턴
+- Kaggle 노트북: `kaggle_notebooks/47_lgbet.py`
+- OOF RMSE: 2,191 (전략 45의 2,193에서 -2, 전략 28의 2,196에서 -5)
+- 핵심: "랜덤 분기" 모델 2종류 — sklearn ExtraTrees(Bagging+랜덤분기) + LGBM ET(GB+랜덤분기) = 서로 다른 오차 패턴
 
-**이전 최선: 전략 28 PL2+UNIT** (Public 2,096.8)
+**이전 최선:**
+- 전략 45 ET EXPAND (Public 2,094.9) — `kaggle_notebooks/45_et_expand.py`
+- 전략 28 PL2+UNIT (Public 2,096.8) — `kaggle_notebooks/28_pl2_unit_price.py`
 - Kaggle 노트북: `kaggle_notebooks/28_pl2_unit_price.py`
 
 ## 프로젝트 구조
@@ -115,6 +118,21 @@ FE → 4모델 Stage1 → PL 신뢰도 필터(50%) → 데이터 증강
 | 08 | **Ridge 스태킹** | **2,234** | **2,155** | **현재 최선** |
 | 09 | EWM 트렌드 | 2,234 | 3,154 | 노이즈 증폭, 과보정 |
 | 10 | 외부 데이터 보정 | 2,234 | 3,021 | 모집단 불일치 |
+
+### 2026-06-27 (LGBM extra_trees → 전략 47 달성, Public 2,091)
+
+4개 조언자 전원 추천한 LGBM `extra_trees=True` 모델 추가:
+
+| # | 전략 | OOF | Public | 교훈 |
+|---|------|-----|--------|------|
+| **47** | **12모델 (10+LGB-ET2)** | **2,191** | **2,090.9** | **GB+랜덤분기 = 또 다른 다양성 축** |
+| 46 | HP 다양성 (CB/LGB 다른 설정) | 2,196~2,202 | — | 같은 알고리즘은 같은 패턴, 효과 없음 |
+
+핵심 발견:
+- "랜덤 분기" 모델이 2종류(sklearn ET + LGBM ET)이면 서로도 다른 오차 패턴
+- sklearn ET = Bagging+랜덤분기, LGBM ET = GB+랜덤분기 → 학습 방식이 달라서 다양성 제공
+- 3위(2,087)와 4점 차이까지 좁혀짐
+- 리더보드: 1위 0.0(답유출), 2위 2,074, 3위 2,087, **4위 2,091(우리)**
 
 ### 2026-06-26 (OOT검증 + α sweep + 알고리즘 다양성 → 전략 45 달성)
 

@@ -59,3 +59,4 @@ L4,46,ALGO DIV V2,알고리즘 다양성 v2 (전략45 (8+ET2)) + GTR,2193,tested
 L4,41,BLEND 28:26,28:26=70:30 블렌딩 + GTR,2196,tested,,
 L4,42,CONF FEAT,confidence 피처 + GTR,2214,tested,,
 L4,43,LOCAL WEIGHT,구별 메타 가중치 + 신뢰도 계층화,2196,tested,,
+L4,47,LGB-ET,LGBM extra_trees (10+LGBET1 α=100) + GTR,2191,tested,,
