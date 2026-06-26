@@ -48,10 +48,12 @@
 ### 답변
 
 #### Gemini
-- (대기 중)
+- [상세 답변은 gemini-Plan.md를 참조하십시오.](../gemini-Plan.md)
+- **요약**: 전략 45를 통해 Public 4위 달성. 핵심 돌파구는 ExtraTrees를 통한 알고리즘 다양성 확보임. 향후 LGBM-ET, KernelRidge 등 이질적 모델 추가와 합성 데이터 생성 규칙(DGP) 역공학, 고오차 영역(대형/고가) 집중 방어를 통해 우승을 노림. Final Submission은 '전략 45 기반 공격형'과 'PL2 배제 및 멀티시드 기반 안정형'의 조합을 제안함.
 
 #### ChatGPT
-- (대기 중)
+- [상세 답변은 chatGPT-Plan.md를 참조하십시오.](../chatGPT-Plan.md)
+- **요약**: 전략 45는 Final 1로 고정하되, 개선폭이 작으므로 추가 모델 확장은 LGBM `extra_trees=True`/Spline-Ridge 같은 소수 후보만 검증. Final 2는 전략 45 변형보다 `45:28=70:30`을 우선 추천하며, ET가 Public subset에만 맞았을 위험을 얕게 줄이는 방어 제출로 쓰는 것이 합리적.
 
 #### Copilot
 - (대기 중)
