@@ -11,17 +11,22 @@
 
 ## 현재 최선 전략
 
-**전략 65: BLEND 56+63 = 70:30** (Public RMSE **2,052.1**, 4위, 2026-06-28)
+**전략 72: Per-Gu Skeleton + BLEND 56+63 = 60:40** (Public RMSE **2,039.7**, 4위, 2026-06-29)
 
 ```
 [전략56] GBDT 12모델 + PL2/no-PL2 블렌딩 + GTR → pred_56
-[전략63] Linear Skeleton(Ridge) + GBDT 잔차 6모델 × 4시드 → pred_63
-→ pred_56 × 70% + pred_63 × 30% → submission
+[전략63] Per-Gu Ridge Skeleton + GBDT 잔차 6모델 × 4시드 → pred_63
+→ pred_56 × 60% + pred_63 × 40% → submission
 ```
 
-- Kaggle 노트북: `kaggle_notebooks/65_blend_56_63_w70.py`
-- 핵심: **구조적으로 다른 시간 외삽 방식의 블렌딩**. GBDT+GTR(사후 보정) vs Skeleton+Residual(선형 외삽).
-- 리더보드: 1위 0.0, 2위 2,024, 3위 2,027, **4위 2,052(우리)**, 5위 2,057
+- Kaggle 노트북: `kaggle_notebooks/72_pergu_skeleton.py`
+- 핵심: **구별 독립 Ridge Skeleton** (구마다 별도 모델 + Dong 원-핫) + GBDT 잔차 학습
+- Skeleton 진화: 라벨(5,765) → 원-핫(2,858) → **Per-Gu(2,705)** 
+- 블렌딩 비율 60:40 최적 확인 (55:45, 50:50 모두 악화)
+
+**이전 최선:**
+
+**전략 65: BLEND 56+63 = 70:30** (Public RMSE **2,052.1**, 4위, 2026-06-28)
 
 **이전 최선:**
 

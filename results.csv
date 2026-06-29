@@ -66,3 +66,8 @@ L4,49,PL SWEEP,PL threshold sweep: 50%가 최적 확인,2191,tested,,
 L4,50,GU RIDGE,구별 Ridge (전역 Ridge(α=50.0)) + GTR,2191,tested,,
 L4,51,RESID+DGP,고오차보정+DGP (Weighted Ridge(w=1.5)) + GTR,2191,tested,,
 L4,54,NEW FEAT,새 피처 테스트 (최선: 기준(전략47)),2191,tested,,
+L4,66,BLD5663W60,BLEND 56+63=60:40 (라벨 Skeleton),,tested,2026-06-29,2048
+L4,67,BLD5663W50,BLEND 56+63=50:50 (라벨 Skeleton),,tested,2026-06-29,2049
+L4,69,ONEHOT SKEL,원-핫 Skeleton + BLEND 56+63=60:40,,tested,2026-06-29,2044
+L4,70,ONEHOT W55,원-핫 Skeleton + BLEND 56+63=55:45,,tested,2026-06-29,2046
+L4,72,PERGU SKEL,Per-Gu Skeleton + BLEND 56+63=60:40,,best,2026-06-29,2040
