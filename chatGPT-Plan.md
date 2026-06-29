@@ -1,184 +1,172 @@
-# ChatGPT Advisor Report (2026-06-27)
+# ChatGPT Advisor Report (2026-06-28)
 
-이 답변은 `GUIDE.md`, `results.csv`, `docs/advisor_questions.md`, 전략 45/46 코드와 기존 실패 실험을 기준으로 작성했다. 현재 기준선은 전략 45 `ET EXPAND`이며, Public RMSE 2,094.9로 전략 28 대비 약 2점 개선된 상태다.
+기준 문서: `GUIDE.md`, `results.csv`, `docs/advisor_question_0628.md`. 현재 기준선은 전략 56 `BLEND 53:47`, Public RMSE 2,086.6이다.
 
-## Executive Summary
+## 결론
 
-전략 45는 Final 1로 고정하는 것이 맞다. ExtraTrees는 단독 성능은 약하지만 기존 CB/LGB 계열과 오차 상관이 충분히 낮아 Ridge 스태킹에서 실제로 기여한 첫 추가 모델이다. 다만 개선폭이 작고 전략 46에서 RF/XGB/ET 변형 확장이 이미 악화됐으므로, 남은 실험은 "더 많은 모델 추가"가 아니라 "딱 다른 오차 표면을 만드는 소수 후보"에 제한해야 한다.
+46점 점프를 다시 만들 가능성이 가장 큰 방향은 새 모델 추가가 아니다. 이미 CatBoost, LightGBM, ExtraTrees, LGBM extra_trees, 타겟 변환, MLP, PL, 메타 모델이 대부분 같은 예측으로 수렴했다. 남은 큰 축은 `Train 2024~2025 -> Test 2026Q1` 시간 갭을 더 정교하게 맞추는 것이다.
 
-핵심 판단은 다음과 같다.
+우선순위는 다음과 같다.
 
-- Final 1: 전략 45 단일, alpha=1.0, seed=42, 현 제출 그대로 유지.
-- Final 2: 전략 45의 과감한 변형보다 `45:28` 또는 `45:26` 블렌드가 더 합리적이다.
-- 추가 모델 후보는 LightGBM `extra_trees=True`, HistGradientBoosting, KernelRidge/Spline-Ridge 정도만 우선순위가 있다.
-- 1~3위와의 차이는 새 알고리즘보다 합성 데이터 생성식, 고가/대형 구간 처리, Public subset 운의 조합일 가능성이 높다.
+1. **OOF가 아니라 OOT로 시간 보정기를 학습**한다.
+2. **현재 GTR을 대체/보완하는 여러 trend family**를 만든다.
+3. **최종 예측 파일끼리 저차원 블렌드/스케일을 제출 피드백으로 탐색**한다.
+4. 모델 추가는 중단하고, 예측 분포와 구간별 변화량을 관리한다.
 
-## Q1. ExtraTrees 원리의 확장
+## 왜 모델 다양성보다 시간 보정인가
 
-ExtraTrees가 기여한 이유는 "성능 좋은 모델"이라서가 아니라, CB/LGB와 다른 방식으로 공간을 자르기 때문이다. RF는 최적 split을 찾기 때문에 결국 GB 트리와 비슷한 오차를 만들었고, XGB는 구조적으로 LGB와 너무 가까웠다. 따라서 다음 후보도 단독 OOF보다 상관, Ridge 계수, 구간별 잔차 상쇄를 먼저 봐야 한다.
+현재 실패 로그가 말하는 것은 명확하다. 좋은 모델은 GBDT와 상관 0.98~0.999로 수렴하고, 상관이 낮은 모델은 단독 OOF가 너무 약하다. 이 상태에서 46점 점프를 만들려면 13번째 모델이 아니라 test 시점의 평균 위치를 맞추는 보정이 필요하다.
 
-### 1. LightGBM `extra_trees=True`
+특히 Public이 OOF보다 약 100점 좋다. 이는 모델이 일반화가 나쁜 것이 아니라, train OOF에 섞인 합성 노이즈와 2026 test의 분포가 다르게 작동한다는 신호다. 따라서 OOF 1~2점 개선을 쫓기보다, 2026Q1의 평균 레벨과 구/월별 레벨을 맞추는 쪽이 더 기대값이 높다.
 
-가장 먼저 시도할 후보는 LGBM의 extra trees 모드다.
+## 제안 1: OOT 기반 Temporal Adapter
 
-추천 설정:
+현재 GTR은 train 전체 월별 평균 상승률을 구별로 계산해 test months ahead에 곱한다. 이 방식은 단순하고 효과가 있었지만, 보정식 자체를 OOT로 학습하지는 않는다.
 
-```python
-LGBMRegressor(
-    objective="regression",
-    extra_trees=True,
-    max_depth=3,
-    num_leaves=31,
-    feature_fraction=0.6,
-    bagging_fraction=0.7,
-    bagging_freq=1,
-    min_child_samples=30,
-    learning_rate=0.02,
-    n_estimators=3000,
-)
-```
+추천 실험은 다음 구조다.
 
-이 모델은 sklearn ExtraTrees와 완전히 같지는 않지만, 기존 LGBM보다 split randomness가 커서 현재 발견한 성공 원리와 가장 가깝다. 단, `num_leaves=110` 같은 기존 튜닝값을 그대로 쓰면 다시 LGB와 비슷해질 수 있으므로 더 얕고 랜덤하게 두는 편이 맞다.
+1. 2024~2025 데이터를 시간 기준으로 나눈다.
+   - 학습: 2024-01~2025-09
+   - OOT 검증: 2025-10~2025-12
+2. 전략 56과 같은 base pipeline을 학습하되, OOT 검증월을 test처럼 예측한다.
+3. OOT 잔차를 `month_ahead`, `Gu`, `Exclusive_Area`, `pred_price`, `unit_price_pred` 기준으로 분석한다.
+4. 잔차 보정 모델은 매우 작게 둔다.
+   - 후보 A: `log(y / pred) = Gu + month_ahead`
+   - 후보 B: `log(y / pred) = Gu + month_ahead + area_bin`
+   - 후보 C: `y - pred = Gu + month_ahead + pred_bin`
+5. 이 보정기를 full train 기준 2026Q1에 적용한다.
 
-판정 기준:
+핵심은 복잡한 residual model이 아니다. 이미 residual modeling은 실패했다. 여기서의 목적은 개별 샘플 잔차를 맞추는 것이 아니라, 시간 외삽으로 생기는 구/월 단위 레벨 차이만 보정하는 것이다.
 
-- 단독 OOF가 3,000~4,000대여도 탈락시키지 않는다.
-- 전략 45의 10개 모델 예측과 평균 상관이 0.970 이하이면 후보로 둔다.
-- 10모델 + LGB-ET를 Ridge에 넣었을 때 OOF가 최소 1점이라도 내려가거나, OOF 동일이어도 test 예측이 전략 45와 의미 있게 다르면 제출 후보가 될 수 있다.
+제출 후보:
 
-### 2. HistGradientBoostingRegressor
+- `56 + OOT log-ratio adapter`
+- `56 + OOT additive adapter`
+- `56 70% + adapter 30%`
 
-`HistGradientBoostingRegressor`는 GB 계열이지만 sklearn 구현의 binning, regularization, leaf growth가 LGB와 다르다. XGB보다 기대값이 높은 이유는 강한 boosting 성능이 아니라 "어설프게 다른 예측 표면"을 만들 가능성 때문이다.
+성공 기준:
 
-추천은 얕고 보수적인 설정이다.
+- OOT 2025Q4에서 전략 56 대비 RMSE가 내려가야 한다.
+- 구별 평균 오차의 절대값이 줄어야 한다.
+- 보정 배율이 과하지 않아야 한다. 대략 -3%~+5% 범위를 넘으면 과적합 가능성이 크다.
 
-```python
-HistGradientBoostingRegressor(
-    loss="squared_error",
-    learning_rate=0.03,
-    max_iter=800,
-    max_leaf_nodes=15,
-    min_samples_leaf=30,
-    l2_regularization=1.0,
-    random_state=42,
-)
-```
+## 제안 2: GTR Family를 다시 넓히기
 
-이 모델은 범주형 처리와 스케일링 방식에 민감하므로, LabelEncoded `Gu`, `Dong`을 그대로 쓰는 버전과 OneHot 버전을 둘 다 비교할 가치가 있다.
+기존 트렌드 보정은 `구별 단순평균, alpha=1.0`이 최적이었다. 다만 이것은 같은 family 안의 alpha sweep에 가깝다. 아직 다른 trend family는 충분히 분리해서 본 것이 아니다.
 
-### 3. KernelRidge 또는 Spline-Ridge
+시도할 만한 family:
 
-KNN/SVR/Ridge-poly가 실패했기 때문에 커널/선형 계열의 기대값은 낮다. 그래도 하나만 더 본다면 `KernelRidge(RBF)`보다 `SplineTransformer + Ridge/BayesianRidge`를 먼저 추천한다. 이유는 샘플 1,969건에서 RBF는 거리 스케일과 범주형 인코딩에 크게 흔들리고, test 외삽에서 예측이 눌릴 수 있기 때문이다.
+1. **Log trend**
+   - 현재: `(1 + pct_growth) ** months`
+   - 대안: `exp(mean(diff(log(monthly_mean))) * months)`
+   - 합성 DGP가 곱셈 구조라면 log trend가 더 안정적일 수 있다.
 
-추천 구성:
+2. **Unit-price trend**
+   - `Target` 평균 대신 `Target / Exclusive_Area`의 구별 월성장률 사용.
+   - 평당가 축이 큰 개선을 만든 전례가 있으므로, 시간 보정도 price보다 unit price에서 더 깨끗할 수 있다.
 
-- 연속형: `Exclusive_Area`, `Floor`, `Age`, `YearMonth_Seq`, `Distance_to_Subway`
-- 범주형: `Gu`, `Dong` OneHot
-- 변환: 연속형에 `SplineTransformer(n_knots=5, degree=3)`
-- 모델: `Ridge(alpha=100~1000)` 또는 `BayesianRidge`
+3. **Robust median trend**
+   - 월별 평균 대신 월별 median 또는 trimmed mean 사용.
+   - 성동구 OOT처럼 1건 이상치가 MSE를 크게 흔드는 데이터에서는 평균 trend가 불안정할 수 있다.
 
-판정 기준은 동일하다. 단독 성능보다 전략 45와의 낮은 상관과 Ridge에서 양의 계수를 받는지가 중요하다.
+4. **Recent slope trend**
+   - 전체 2024~2025 pct_change 평균 대신 최근 6개월 또는 최근 9개월 log slope 사용.
+   - test가 2026Q1이므로 오래된 2024 패턴보다 2025 하반기 기울기가 더 중요할 수 있다.
 
-### 하지 말아야 할 확장
+5. **Global+Gu shrink trend**
+   - `trend = w * gu_trend + (1-w) * global_trend`
+   - 구별 샘플이 적으므로 Gu trend 100%가 우연히 Public에 맞았더라도 Private에서 흔들릴 수 있다.
+   - `w`는 0.5, 0.7, 0.9 정도만 본다.
 
-RF, XGB, ET seed/depth 변형은 이미 전략 46에서 실익이 낮았다. 같은 계열을 더 늘리면 Ridge가 일부 무시하더라도 test 예측에는 잡음이 섞인다. 모델 수를 늘리는 실험은 지금부터 기대값보다 제출 리스크가 크다.
+이 실험은 모델 재학습 없이 최종 예측에 곱하는 방식으로 빠르게 만들 수 있다. 하루 제출 5회 제한이 있으므로 로컬 OOT에서 2개만 남기고 제출한다.
 
-## Q2. 1~3위와의 격차를 줄이는 전략
+## 제안 3: Public 피드백을 이용한 저차원 운영
 
-1~3위가 썼을 가능성이 큰 접근은 세 가지다.
+3위의 46점 개선은 새로운 알고리즘 하나보다 제출 파일 간 blend/scale을 잘 찾았을 가능성이 높다. 우리도 이미 53(no PL2)와 47(PL2)을 80:20으로 섞어 개선했다. 이 방향을 더 체계화해야 한다.
 
-### 1. 합성 생성식에 더 가까운 구조
+후보 축:
 
-현재 파이프라인은 트리 모델이 생성식을 근사한다. 상위권은 더 직접적으로 다음 형태를 모델링했을 가능성이 있다.
+- `strategy53 no-PL2`
+- `strategy47 PL2`
+- `strategy56 current 80:20`
+- `OOT adapter`
+- `GTR family` 1~2개
 
-```text
-log(price) = gu_base + dong_base + area_effect + floor_effect + age_effect
-             + brand_effect + month_trend + interaction + noise
-```
+탐색 방식:
 
-우리는 평당가 축으로 `Target / Area`를 넣어 이 방향의 일부를 이미 잡았다. 추가 여지가 있다면 `Area` 외의 타겟 분해를 무작정 늘리는 것이 아니라, log additive 구조에서 residual을 분석하는 쪽이다.
+1. 먼저 로컬 OOT에서 후보 예측들의 상관과 구간별 차이를 본다.
+2. Public 제출은 한 번에 한 축만 움직인다.
+3. 제출 후보는 다음처럼 저차원으로 제한한다.
+   - `53:47 = 90:10`
+   - `53:47 = 70:30`
+   - `56 * global_scale`, scale은 0.995 또는 1.005
+   - `56 + OOT adapter 30%`
+   - `56 + unit-price GTR`
 
-실험 후보:
+주의할 점은 Public 과적합이다. 제출 피드백으로 5차원 이상을 맞추면 Private 리스크가 커진다. 하지만 1차원 blend 또는 1차원 scale은 현재처럼 OOF/Public 갭이 큰 상황에서 현실적인 운영 수단이다.
 
-- `log(Target)`에 대해 OneHot `Gu/Dong` + spline 연속형 + interaction 소수만 넣은 Ridge.
-- 이 모델의 OOF residual이 전략 45 residual과 다른지 확인.
-- 단독 점수가 나쁘더라도 Ridge stack에서 +계수를 받는지 확인.
+## 제안 4: Test Prediction Distribution Matching
 
-### 2. 고가/대형 구간의 손실 지배 대응
+정답 없이도 할 수 있는 점검이 있다. train 2025Q4와 test 2026Q1의 예측 분포를 비교해, 보정 후 분포가 비정상적으로 튀는지 확인한다.
 
-RMSE에서는 고가, 대형, 특정 구간의 소수 샘플이 순위를 크게 흔든다. 상위권은 전체 평균 RMSE보다 상위 오차 구간을 더 직접적으로 관리했을 수 있다.
+체크 항목:
 
-다만 이미 sample weight, 구별 분리, local weight가 실패했으므로 다시 큰 구조를 만들기보다 전략 45 기준으로 "구간별 Final 2 리스크"를 보는 것이 낫다.
+- 구별 예측 평균 상승률
+- 월별 예측 평균 상승률: 2026-01, 2026-02, 2026-03
+- area bin별 예측 상승률
+- predicted price decile별 상승률
+- `Target / Area` 예측 분포
 
-해야 할 분석:
+목표는 train의 실제 상승률과 test의 예측 상승률이 일관되는지 보는 것이다. 예를 들어 GTR 후 특정 구의 2026Q1 예측 unit price가 2025Q4보다 10% 이상 튄다면, Public이 좋아도 Private 리스크가 있다.
 
-- OOF에서 `Target` 상위 10%, `Exclusive_Area` 상위 10%, Gangnam/Seocho/Yongsan/Seongdong 구간의 45 vs 28 vs 26 RMSE 비교.
-- Test 예측에서 같은 구간의 45-28, 45-26 차이 확인.
-- ET 추가가 특정 구간에서만 예측을 올리거나 내리는지 확인.
+이 분석은 점수를 직접 올리는 모델은 아니지만, 제출 후보를 줄이는 데 매우 중요하다. 제출 5회 제한에서는 "안 좋은 후보를 제출하지 않는 것"도 점수 개선이다.
 
-만약 ET가 고가/대형에서만 과하게 낮추거나 올린다면, Final 2는 전략 45 단일이 아니라 45와 28/26 블렌드가 맞다.
+## 제안 5: PL은 confidence가 아니라 disagreement regime으로 제한
 
-### 3. Public subset에 더 잘 맞은 운 또는 더 강한 transductive tuning
+PL2 threshold와 weighted PL2가 실패한 이유는 confidence 수치 자체가 변별력이 낮기 때문이다. 그래도 PL을 완전히 버리기보다, 모델 합의가 높은 샘플의 특성을 먼저 봐야 한다.
 
-현재 45와 28의 Public 차이는 약 2점이다. 이는 "압도적 새 구조"라기보다 Public subset에서 ET의 오차 상쇄가 조금 더 맞은 수준이다. 1~3위와의 격차도 비슷한 크기라면, 그들이 반드시 더 일반화 좋은 모델을 가졌다고 단정하면 안 된다.
+다시 접근한다면 다음 방식만 추천한다.
 
-Adversarial AUC 0.505는 Train/Test feature 분포가 거의 같다는 의미라 Private 방어에는 좋은 신호다. 반대로 말하면, AV로 test subset을 더 정교하게 갈라서 Public만 맞추는 길은 기대값이 낮다. 이제는 Public 1~3위 추격보다 Private에서 45가 흔들리지 않는지 확인하는 것이 더 중요하다.
+- confidence 상위 n%가 아니라, `PL2 유/무`, `ET/LGBET`, `log/raw`, `price/unit_price`가 모두 같은 방향으로 움직이는 샘플만 사용한다.
+- PL target은 평균이 아니라 median 또는 trimmed mean을 쓴다.
+- pseudo sample weight는 작게 고정한다. 예: 원본 1.0, pseudo 0.2.
+- 적용 모델은 전체 12모델이 아니라 GBDT 4모델 Stage1에만 제한한다.
 
-## Q3. 전략 45 기반 Final Submission
+다만 우선순위는 낮다. PL 계열은 이미 여러 번 OOF 낙관성과 Public 악화를 보였고, 현재 최선도 no-PL2 80% 쪽이다.
 
-### Final 1: 전략 45 단일
+## 하루 5회 제출 운영안
 
-Final 1은 전략 45 그대로가 맞다.
+다음 2일은 모델 추가를 멈추고, 보정 후보만 제출하는 편이 좋다.
 
-- Public 최고점 2,094.9.
-- OOF도 전략 28보다 소폭 개선.
-- ET 추가는 단순 Public 과적합이라고 보기 어렵다.
-- Adversarial Validation AUC=0.505라 Train/Test 분포 리스크도 낮다.
+### Day 1
 
-여기서 alpha=0.9, multi-seed, ET 변형, RF/XGB 추가로 희석하지 않는 편이 낫다. 이미 alpha sweep과 multi-seed가 Public에서 손해였고, 전략 46도 확장 악화를 보여줬다.
+1. `53:47 = 90:10`
+2. `53:47 = 70:30`
+3. `56 + log trend GTR`
+4. `56 + unit-price GTR`
+5. `56 + robust median GTR`
 
-### Final 2: `45:28` 또는 `45:26` 블렌드
+여기서 하나라도 2,060대 이하로 가면, 46점 점프의 원인은 trend family 또는 PL/no-PL blend였다고 보면 된다.
 
-Final 2는 "전략 45의 다른 버전"보다 구조적 방어 블렌드가 낫다.
+### Day 2
 
-우선순위:
+Day 1 최고 후보를 기준으로 한 축만 더 움직인다.
 
-1. `45:28 = 70:30` 또는 `80:20`
-2. `45:26 = 70:30` 또는 `80:20`
-3. 전략 28 단일
-
-판단 로직:
-
-- 45와 28은 대부분 구조를 공유하지만 ET 유무가 다르다. `45:28`은 ET 기여를 유지하면서 ET가 Public subset에만 맞았을 위험을 줄인다.
-- 26은 평당가 축이 빠진 더 보수적인 계열이다. `45:26`은 PL2+평당가+ET가 모두 같은 방향으로 편향됐을 때의 방어선이다.
-- 전략 08 또는 PL2 배제 모델은 너무 멀다. Public 손해가 크고, 지금의 AV 결과상 그렇게까지 보수적으로 갈 근거는 약하다.
-
-추천 최종안:
-
-| 역할 | 제출 | 이유 |
-|---|---|---|
-| Final 1 | 전략 45 단일 | 최고 Public, OOF도 개선, AV 안정 |
-| Final 2 | `45:28 = 70:30` | ET 리스크만 줄이는 가장 얕은 방어 |
-
-`45:28`의 test 예측 차이가 너무 작아 방어 의미가 없으면 `45:26 = 80:20`을 2순위로 둔다. 반대로 `45:26`이 고가/대형 예측을 과하게 낮추면 쓰지 않는다.
-
-## 남은 실험 우선순위
-
-1. `45`, `28`, `26` 제출 파일을 같은 ID 순서로 모아 예측 차이 리포트 생성.
-2. `45:28` 70:30, 80:20과 `45:26` 70:30, 80:20 생성.
-3. 전체/구별/면적 상위 10%/예측가 상위 10%/신축·구축별 평균 변화 확인.
-4. 제출권을 쓴다면 `45:28=70:30` 하나만 먼저 확인.
-5. 추가 모델은 LGB-ET 하나를 최우선으로 하고, 개선이 없으면 모델 탐색 종료.
+1. 최고 후보의 약한 blend 버전
+2. 최고 후보의 강한 blend 버전
+3. `OOT log-ratio adapter 30%`
+4. `OOT log-ratio adapter 50%`
+5. Final 방어용 `56` 또는 `56`에 가까운 보수 blend
 
 ## 최종 권고
 
-전략 45는 현재 구조에서 의미 있는 최선이다. 하지만 개선폭이 2점 수준이므로 "ET가 답이다"라고 확장하기보다, ET가 만든 작은 다양성을 보존하면서 Private에서 그 리스크를 줄이는 운영이 더 중요하다.
+지금 상태에서 46점 점프를 기대할 수 있는 유일한 남은 큰 축은 시간 외삽 보정이다. 새 모델은 대부분 GBDT와 같은 답으로 수렴했고, 약한 모델은 노이즈만 더한다.
 
-따라서 현재 기준 최종 제출은 다음 조합을 권한다.
+따라서 다음 액션을 추천한다.
 
-```text
-Final 1 = 전략 45 단일
-Final 2 = 45:28 = 70:30
-```
+1. `strategy56`을 고정 기준선으로 둔다.
+2. OOT 2025Q4를 이용해 `log(y/pred)` 기반 temporal adapter를 만든다.
+3. GTR을 `log trend`, `unit-price trend`, `robust trend`, `recent slope`, `global+gu shrink`로 분기한다.
+4. 제출은 1차원 blend/scale만 움직인다.
 
-남은 시간은 새 모델을 많이 붙이는 데 쓰지 말고, `45:28`, `45:26` 블렌드가 어떤 구간의 예측을 얼마나 바꾸는지 수치화하는 데 쓰는 것이 가장 기대값이 높다.
+요약하면, 모델링 문제로 더 파고들기보다 `2026Q1의 위치를 얼마나 올리거나 내릴 것인가`를 맞추는 문제로 바꿔야 한다. 3위의 점프도 이 축에서 나왔을 가능성이 가장 높다.

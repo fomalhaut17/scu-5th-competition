@@ -11,17 +11,24 @@
 
 ## 현재 최선 전략
 
-**전략 56: BLEND 53:47** (Public RMSE **2,086.6**, 5위, 2026-06-28)
+**전략 65: BLEND 56+63 = 70:30** (Public RMSE **2,052.1**, 4위, 2026-06-28)
 
 ```
-[전략53] PL2 없음 + 12모델 × 4시드(42/123/456/789) → Ridge → 예측A
-[전략47] PL2 + 12모델 × 1시드(42) → Ridge → 예측B
-→ A×80% + B×20% → GTR
+[전략56] GBDT 12모델 + PL2/no-PL2 블렌딩 + GTR → pred_56
+[전략63] Linear Skeleton(Ridge) + GBDT 잔차 6모델 × 4시드 → pred_63
+→ pred_56 × 70% + pred_63 × 30% → submission
 ```
+
+- Kaggle 노트북: `kaggle_notebooks/65_blend_56_63_w70.py`
+- 핵심: **구조적으로 다른 시간 외삽 방식의 블렌딩**. GBDT+GTR(사후 보정) vs Skeleton+Residual(선형 외삽).
+- 리더보드: 1위 0.0, 2위 2,024, 3위 2,027, **4위 2,052(우리)**, 5위 2,057
+
+**이전 최선:**
+
+**전략 56: BLEND 53:47** (Public RMSE **2,086.6**, 6위→4위, 2026-06-28)
 
 - Kaggle 노트북: `kaggle_notebooks/56_blend_53_47.py`
-- 핵심: PL2 제거 + 멀티시드가 Public 개선 (OOF는 악화). PL2 유/무 블렌딩이 추가 개선.
-- 리더보드: 1위 0.0, 2위 2,024, 3위 2,073, 4위 2,074, **5위 2,087(우리)**
+- 전략53(PL2없음 4시드)×80% + 전략47(PL2)×20% → GTR
 
 **이전 최선:**
 
@@ -403,11 +410,10 @@ python dashboard.py
 ### 시도 가능한 방향
 - **블렌딩 비율 탐색**: 53:47 = 70:30, 90:10 등 비율 변경 (현재 80:20이 최선)
 - **시드 조합 최적화**: 4시드(42/123/456/789)가 8시드보다 좋았음. 3시드, 5시드도 시도 가능
-- **PL2 없는 파이프라인에서 추가 개선**: 피처/모델 변경을 no-PL2 환경에서 재테스트
 
 ### 소진된 방향 (시도 금지)
 - 트렌드 보정 변형 (동별/EWM/외부), 메타 모델 복잡화, 수동 피처, Loss 변경
-- Residual Modeling, NN (MLP), 블렌딩 (08+16), Pseudo Label v1
+- Residual Modeling, NN (MLP/TabNet/Entity Embedding MLP), 블렌딩 (08+16), Pseudo Label v1
 - 외부 실거래 데이터, Building Age, TimeSeriesSplit CV
 - Sample Weight, kNN Correction, Domain Adaptation
 - 추가 타겟 변환 (층당가, sqrt, 면적층가 — 전략 29에서 모두 실패)
@@ -429,6 +435,13 @@ python dashboard.py
 - 구별 Ridge 앙상블 (구당 ~200건 과적합, shrink 10%도 무효 — 전략 50)
 - 고오차 사후보정 (편향/잔차GBR/가중Ridge 전부 악화 — 전략 51)
 - DGP 역공학 곱셈피처 (트리가 이미 학습, 추가 가치 없음 — 전략 51)
+- MAE loss 모델 (GBDT와 상관 0.998, 다양성 없음 — 전략 57)
+- ET/LGBET unit_price 확장 (OOF 3,800+ 너무 약함 — 전략 57)
+- Weighted PL2 (confidence 변별력 없음, Hard cutoff보다 악화 — 전략 57)
+- DART booster (log에서 폭발 28,043, raw에서 상관 0.995 — 전략 58)
+- BoxCox 타겟 변환 (λ=0.84 ≈ raw, 상관 0.999 — 전략 58)
+- 기본 MLP (OOF 5,700, 다양하지만(corr 0.81) 너무 약함 — 전략 59)
+- Entity Embedding MLP (OOF 2,723으로 개선했지만 상관 0.98로 수렴 — 전략 60)
 
 ### 핵심 교훈
 - OOF와 Public의 갭이 크므로(전략 28: OOF 2,196 → Public 2,096) OOF만으로 판단하면 안됨
@@ -440,6 +453,7 @@ python dashboard.py
 - **OOT 검증 결과 (2026-06-26)**: OOF/OOT/Public 순위 일치하므로 OOF 순위 자체는 신뢰 가능. 단 PL2의 OOF 기여는 3배 과대 (transductive bias)
 - **다양성이 일반화의 핵심**: OOT에서 평당가(+51) > Scale(+33) > PL2(+6). 모델 다양성이 미래 데이터 일반화에 가장 중요
 - **트렌드 보정 α=1.0 최적 확정**: α=0.7~1.2 sweep 결과 U자 곡선 바닥이 α=1.0
+- **성능-다양성 딜레마 (2026-06-28)**: 같은 데이터에서 모델이 잘 맞출수록 GBDT와 같은 예측에 수렴 (약한 모델은 다양하지만 노이즈, 강한 모델은 정확하지만 중복). ET(OOF 3,600/corr 0.96)만이 유일한 스위트 스팟. GBDT+Ridge 12모델 스택은 사실상 최적점 도달
 - **구별 약점은 이상치**: 성동구 OOT RMSE 5,074의 78%가 1건 합성 노이즈 (93㎡ 아파트가 평균의 42% 가격)
 
 ## 데이터 분석: 합성 데이터 & RMSE 0 미스터리 (2026-06-25)
