@@ -1,8 +1,8 @@
 """
-73 PER-GU SKELETON + LOG_AREA + BLEND 56+63 = 60:40
-구별 독립 Ridge Skeleton (Gu마다 별도 모델)
-전략72에 log_Area 피처 추가 (면적-가격 power-law 관계를 선형 모델이 포착하도록)
-로컬 OOF 검증: Skeleton 2,705 → 2,665 (다른 교호작용 Area×Age/Dist/Park 등은 Gu당 ~200건 과적합으로 전부 악화, log_Area만 유효)
+74 PER-GU SKELETON + PL2 + BLEND 56+63 = 60:40
+구별 독립 Ridge Skeleton (Gu마다 별도 모델)에 PL2(전략47에서 생성한 가짜 라벨)를 학습에만 사용 (검증에선 제외)
+OOT(미래 3개월 holdout) 검증: Skeleton RMSE 3,014.6 → 2,902.7 (시간분리 검증이라 naive OOF보다 신뢰도 높음)
+전략73(log_Area)은 naive OOF 개선했지만 Public 악화로 폐기 — 이번엔 OOT로 먼저 검증 후 적용
 """
 import os
 import numpy as np
@@ -64,7 +64,6 @@ def add_feature_engineering(df):
     df['Area_x_Floor'] = df['Exclusive_Area'] * df['Floor']
     df['Floor_per_Area'] = df['Floor'] / df['Exclusive_Area']
     df['Brand_x_Area'] = df['Brand_Apartment'] * df['Exclusive_Area']
-    df['log_Area'] = np.log1p(df['Exclusive_Area'])
     return df
 
 def encode_categoricals(train_df, test_df, as_category=False):
@@ -316,23 +315,29 @@ print(f"\n{'=' * 60}")
 print("전략 63: Linear Skeleton + GBDT Residual")
 print("=" * 60)
 
-# Skeleton (Per-Gu Ridge)
+# Skeleton (Per-Gu Ridge) — PL2(test_selected/pseudo_labels)는 학습에만 사용, 검증(CV)에서는 제외
 train_skel = add_feature_engineering(base_preprocess(train_orig))
 test_skel = add_feature_engineering(base_preprocess(test_orig))
+pl2_skel = add_feature_engineering(base_preprocess(test_selected))
 
 gu_train = train_skel['Gu'].values
 gu_test = test_skel['Gu'].values
+gu_pl2 = pl2_skel['Gu'].values
 num_cols_skel = [c for c in train_skel.columns if c not in ['Gu', 'Dong', 'Target']]
 
 ohe_dong = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 ohe_dong.fit(pd.concat([train_skel[['Dong']], test_skel[['Dong']]]))
 dong_tr = ohe_dong.transform(train_skel[['Dong']])
 dong_te = ohe_dong.transform(test_skel[['Dong']])
+dong_pl2 = ohe_dong.transform(pl2_skel[['Dong']])
 
 X_skel_num_tr = train_skel[num_cols_skel].values.astype(float)
 X_skel_num_te = test_skel[num_cols_skel].values.astype(float)
+X_skel_num_pl2 = pl2_skel[num_cols_skel].values.astype(float)
 X_skel_raw_tr = np.hstack([X_skel_num_tr, dong_tr])
 X_skel_raw_te = np.hstack([X_skel_num_te, dong_te])
+X_skel_raw_pl2 = np.hstack([X_skel_num_pl2, dong_pl2])
+y_log_pl2 = np.log1p(pl2_skel['Target'].values)
 
 skeleton_oof = np.zeros(n_orig)
 skeleton_test = np.zeros(len(test_orig))
@@ -340,37 +345,53 @@ skeleton_test = np.zeros(len(test_orig))
 for gu in np.unique(gu_train):
     tr_mask = gu_train == gu
     te_mask = gu_test == gu
+    pl2_mask = gu_pl2 == gu
     n_gu = tr_mask.sum()
     n_splits_gu = min(N_SPLITS, n_gu)
     if n_splits_gu < 2:
         continue
 
-    scaler_gu = StandardScaler()
-    X_gu = scaler_gu.fit_transform(X_skel_raw_tr[tr_mask])
+    X_gu_raw = X_skel_raw_tr[tr_mask]
+    X_gu_pl2_raw = X_skel_raw_pl2[pl2_mask]
     y_gu = y_log[tr_mask]
+    y_gu_pl2 = y_log_pl2[pl2_mask]
     y_true_gu = y_true_orig[tr_mask]
 
     kf_gu = KFold(n_splits=n_splits_gu, shuffle=True, random_state=42)
     best_alpha_gu, best_rmse_gu = None, float('inf')
     for alpha in [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]:
         oof_tmp = np.zeros(n_gu)
-        for tr, va in kf_gu.split(X_gu):
-            m = Ridge(alpha=alpha); m.fit(X_gu[tr], y_gu[tr])
-            oof_tmp[va] = m.predict(X_gu[va])
+        for tr, va in kf_gu.split(X_gu_raw):
+            scaler_fold = StandardScaler()
+            X_fit = np.vstack([X_gu_raw[tr], X_gu_pl2_raw]) if len(y_gu_pl2) else X_gu_raw[tr]
+            y_fit = np.concatenate([y_gu[tr], y_gu_pl2]) if len(y_gu_pl2) else y_gu[tr]
+            X_fit_sc = scaler_fold.fit_transform(X_fit)
+            X_va_sc = scaler_fold.transform(X_gu_raw[va])
+            m = Ridge(alpha=alpha); m.fit(X_fit_sc, y_fit)
+            oof_tmp[va] = m.predict(X_va_sc)
         rmse = np.sqrt(np.mean((np.expm1(oof_tmp) - y_true_gu) ** 2))
         if rmse < best_rmse_gu: best_rmse_gu = rmse; best_alpha_gu = alpha
 
     idx_tr = np.where(tr_mask)[0]
-    for tr, va in kf_gu.split(X_gu):
-        m = Ridge(alpha=best_alpha_gu); m.fit(X_gu[tr], y_gu[tr])
-        skeleton_oof[idx_tr[va]] = np.expm1(m.predict(X_gu[va]))
+    for tr, va in kf_gu.split(X_gu_raw):
+        scaler_fold = StandardScaler()
+        X_fit = np.vstack([X_gu_raw[tr], X_gu_pl2_raw]) if len(y_gu_pl2) else X_gu_raw[tr]
+        y_fit = np.concatenate([y_gu[tr], y_gu_pl2]) if len(y_gu_pl2) else y_gu[tr]
+        X_fit_sc = scaler_fold.fit_transform(X_fit)
+        X_va_sc = scaler_fold.transform(X_gu_raw[va])
+        m = Ridge(alpha=best_alpha_gu); m.fit(X_fit_sc, y_fit)
+        skeleton_oof[idx_tr[va]] = np.expm1(m.predict(X_va_sc))
 
     if te_mask.sum() > 0:
-        X_gu_te = scaler_gu.transform(X_skel_raw_te[te_mask])
-        m_full = Ridge(alpha=best_alpha_gu); m_full.fit(X_gu, y_gu)
+        scaler_full = StandardScaler()
+        X_fit_full = np.vstack([X_gu_raw, X_gu_pl2_raw]) if len(y_gu_pl2) else X_gu_raw
+        y_fit_full = np.concatenate([y_gu, y_gu_pl2]) if len(y_gu_pl2) else y_gu
+        X_fit_full_sc = scaler_full.fit_transform(X_fit_full)
+        X_gu_te = scaler_full.transform(X_skel_raw_te[te_mask])
+        m_full = Ridge(alpha=best_alpha_gu); m_full.fit(X_fit_full_sc, y_fit_full)
         skeleton_test[te_mask] = np.expm1(m_full.predict(X_gu_te))
 
-    print(f"  Gu={gu}: n={n_gu}, alpha={best_alpha_gu}, RMSE={best_rmse_gu:,.0f}")
+    print(f"  Gu={gu}: n={n_gu}, n_pl2={pl2_mask.sum()}, alpha={best_alpha_gu}, RMSE={best_rmse_gu:,.0f}")
 
 best_rmse_skel = np.sqrt(np.mean((skeleton_oof - y_true_orig) ** 2))
 print(f"  Per-Gu Skeleton OOF RMSE: {best_rmse_skel:,.0f}")
