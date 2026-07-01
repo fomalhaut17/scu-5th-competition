@@ -1,210 +1,176 @@
-# opencode Advisor Report (2026-06-28)
+# opencode Plan — 2위 추월을 위한 구조적 돌파구
 
-> Context: Public 6위 (2,086.6), 3위가 2,073→2,027로 46점 점프
-> 전일 대비: 성능-다양성 딜레마 확인 (GBDT+Ridge 12모델 = 최적점), 모든 비트리/PL/보정 시도 실패
-
----
-
-## 진단: 왜 46점 점프가 가능했는가?
-
-3위(2,027)와 우리(2,087)의 격차 60점. 이 차이는 **모델 다양성 소진 상태**에서 발생한 점프.
-
-핵심 방증:
-- OOF 2,191 vs Public 2,087 → **CV가 pessimistic (100점 차이)**
-- GBDT+Ridge 12모델 스택은 **성능-다양성 딜레마로 최적점 도달**
-- 기존 시도는 모두 **모델/피처/PL의 변형**에 집중 → 수확 체감
-
-**3위가 한 46점 점프의 가장 유력한 설명**: 시간 축(Time Axis)을 직접 모델링하거나, OOF-Public 갭을 활용한 Test 분포 매칭.
+**작성일**: 2026-07-01 | **목표**: 2위 RMSE 2,000.87 추월 (현재 2,028.35, 갭 27.48점, 7일)
 
 ---
 
-## 제안 1: Time-Aware Decomposition (가장 유망) ⭐⭐⭐
+## 진단: 지금까지의 실패 패턴
 
-### 문제
-현재 GBDT 모델은 YearMonth_Seq를 피처로 받지만, **트리 기반 모델은 시간 외삽(extrapolation)이 근본적으로 약함**. YearMonth_Seq=25(2026년 1월)은 Train의 최대값(2025년 12월, seq=23)을 벗어난 범위 → 트리는 이 구간을 학습한 적이 없음.
+| 실패 유형 | 원인 | 사례 |
+|-----------|------|------|
+| **검증셋 과적합** | OOT 246건으로 신규 컴포넌트 가치 판단 불가 | 전략76 (4-way OOT 개선 but Public 악화) |
+| **OOF 낙관성** | in-sample OOF가 Public과 다른 방향 | 전략73 (log_Area), 전략74 (PL2 증강) |
+| **성능-다양성 딜레마** | 약한 모델은 다양하지만 노이즈, 강한 모델은 GBDT와 수렴 | 전략44~60 전반 |
 
-### 해결: Linear Trend Decomposition
-Train 데이터에서 시간 trend를 먼저 추출하고, 잔차(residual)를 GBDT로 학습:
+**핵심**: 기존 파이프라인(GBDT 12모델 + Ridge + GTR)은 이미 지역 최적점. 점진적 튜닝으로는 2,000.87 도달 불가.
 
-```
-Step 1: Log(Target) ~ Log(피처) + YearMonth_Seq (Ridge)
-  → 선형 모델이 시간 외삽을 담당
-Step 2: 잔차(Target - Skeleton) ~ GBDD (CB/LGB)
-  → 비선형 패턴 학습
-Step 3: Skeleton + Residual = Final Prediction
-```
+---
 
-### 전략 63(Hybrid Skeleton)과의 차별점
-전략 63은 Ridge(alpha=1.0)를 모든 수치형에 대해 log 변환 후 사용. 너무 단순.
-개선:
-- **alpha search**: Ridge alpha를 0.1~1000 범위에서 CV로 최적화
-- **Skeleton 모델 다양화**: Ridge + Lasso + ElasticNet을 각각 skeleton으로 사용 → 앙상블
-- **YearMonth_Seq 강조**: Skeleton에서 YearMonth_Seq에 높은 가중치 부여 (또는 유일한 피처로 사용)
-- **Gu별 Skeleton**: 각 Gu별로 별도 선형 trend 추정 (GTR의 일반화된 버전)
+## 제안 1: DGP 수식 역공학 (Symbolic Regression) ⭐ 최우선
 
-### 기대 효과
-- 시간 외삽을 선형 모델이 전담 → GBDT는 비선형 패턴에 집중
-- 3위의 46점 점프를 따라잡을 유일한 방법
-- **기대**: 10~30점 (시간 외삽이 Test의 많은 부분을 설명한다면)
+**근거**: 데이터는 100% 합성. 피처 10개로 2,000개 샘플 생성 → **결정론적 함수 + 노이즈** 구조일 가능성 90%+
 
-### 구현 (30분)
+| 정황 | 해석 |
+|------|------|
+| 피처 10개만으로 OOF 2,196 달성 | DGP가 비교적 단순한 함수일 가능성 |
+| Linear R²=0.939, RMSE 2,301 | 선형으로도 93.9% 설명 가능 |
+| Tree 모델 OOF 2,191 vs Linear OOF 5,765 | **강한 비선형성 존재** (트리만 포착) |
+| Ridge Skeleton OOF 2,705 (log-price) | 로그-선형 스켈레톤이 상당 부분 설명 |
+
+### 실행 계획
+
 ```python
-# Gu별 선형 Trend Skeleton
-for gu in gu_list:
-    gu_mask = train['Gu'] == gu
-    X_gu = train.loc[gu_mask, 'YearMonth_Seq'].values.reshape(-1, 1)
-    y_gu = np.log1p(train.loc[gu_mask, 'Target'].values)
-    model = Ridge(alpha=1.0).fit(X_gu, y_gu)
-    train_gu_pred = np.expm1(model.predict(X_gu))
-    
-    test_gu_mask = test['Gu'] == gu
-    X_test_gu = test.loc[test_gu_mask, 'YearMonth_Seq'].values.reshape(-1, 1)
-    test_gu_pred = np.expm1(model.predict(X_test_gu))
+# 1단계: 현재 피처로 Symbolic Regression (PySR 사용)
+# DGP 후보: price = f(Gu, Dong, Area, Floor, Year_Built, YearMonth) + ε
+# f는 곱셈/가산 구조일 가능성 높음 (전략51에서 곱셈 구조 확인됨)
 
-# 잔차 = 실제값 - Skeleton 예측
-residual = train['Target'] - train_skeleton_pred
+# 2단계: 발견된 수식으로 직접 예측
+# → Symbolic 예측을 추가 컴포넌트로 블렌딩
 
-# GBDT로 잔차 학습 (YearMonth_Seq 제외)
-gbdt.fit(X_train.drop('YearMonth_Seq'), residual)
-
-# 최종 = Skeleton + GBDT Residual
-final = skeleton_test_pred + gbdt_test_pred
+# 3단계: 발견된 수식의 잔차를 기존 GBDT로 재학습
 ```
+
+**단계별 접근**:
+1. **PySR 설치** (`pip install pysr`) → 로컬에서 신속 실행
+2. 피처 10개 + 목표변수(log price)로 Symbolic Regression
+3. 단순도-정확도 파레토 프론티어에서 가장 단순한 수식 선택
+4. 발견된 수식 예측값을 pred_78로 등록 → 56+63+69+78 4-way 블렌딩
+
+**기대 효과**: DGP의 핵심 구조를 포착하면 **한 번에 15~30점** 점프 가능
 
 ---
 
-## 제안 2: Public LB 기반 Blend Optimization (실용적) ⭐⭐
+## 제안 2: Skeleton 다양화 앙상블 (10+ Skeletons)
 
-### 문제
-현재 블렌드 비율(53:47=80:20)은 **단 1회 제출로 결정**. 시드 가중치도 모두 동일(0.25).
+현재는 Skeleton 2종(Per-Gu, One-Hot)만 사용. Skeleton은 단순해서 과적합 위험이 낮으므로 **대량 생산**이 가능.
 
-### 해결
-하루 5회 제출 중 1~2회를 blend 최적화에 할당. Bayesian Optimization으로 LB 피드백 기반 탐색:
+### Skeleton 후보 (Ridge 기반, log-price)
 
-**최적화 변수** (6개):
-1. w_53 (53 비중, 0.5~1.0)
-2. w_seed_42 (시드42 가중치, 0.0~1.0)
-3. w_seed_123 (시드123 가중치)
-4. w_seed_456 (시드456 가중치)
-5. w_seed_789 (시드789 가중치)
-6. gtr_alpha (GTR 강도, 0.0~2.0)
+| # | Skeleton 종류 | 설명 |
+|---|---------------|------|
+| 1 | **Per-Gu Ridge** (기존 63) | 구별 독립 Ridge |
+| 2 | **One-Hot Ridge** (기존 69) | 전체 One-Hot |
+| 3 | **Per-Dong Ridge** | 동별 독립 Ridge (27개 동) — 더 세분화 |
+| 4 | **Per-Gu Lasso** | 구별 Lasso (α sweep) — 다른 정규화 |
+| 5 | **Per-Gu ElasticNet** | 구별 ElasticNet — 또 다른 정규화 |
+| 6 | **Gu×Time Ridge** | price ~ Gu * YearMonth_Seq — 구별 시간 추세 |
+| 7 | **Area-binned Ridge** | 면적 구간별 (소/중/대/초대형) 독립 Ridge |
+| 8 | **Floor-binned Ridge** | 층수 구간별 (저/중/고층) 독립 Ridge |
+| 9 | **RBF Kernel Ridge** | 비선형 Skeleton |
+| 10 | **Polynomial Ridge** (degree=2) | 다항 상호작용 Skeleton |
+| 11 | **Robust Ridge** (Huber) | 이상치 덜 민감한 Skeleton |
 
-### 리스크 관리
-- 531개 Test 샘플에서 6개 변수 최적화는 **과적합 위험 낮음**
-- Public/Private 상관관계가 높은 대회에서는 유효한 전략
-- **안전장치**: 첫 5회는 넓은 범위 탐색, 이후 5회는 최적점 근처 집중
+### 실행 계획
+1. 11개 Skeleton 각각 학습 → 각각 GBDT 잔차 학습 (6모델×4시드)
+2. 11개 × 6×4 = 264개 예측 → Ridge로 스택 or 단순 블렌딩
+3. OOT 검증으로 상위 Skeleton 선별 → 최종 블렌딩
 
-### 간단 버전 (지금 바로 가능)
+**기대 효과**: Skeleton 다양성 확보 → GBDT 잔차의 출발점 다양화 → **5~10점** 개선
+
+---
+
+## 제안 3: 시간 외삽 재구조화 (Time Decomposition)
+
+Train(2024~2025) → Test(2026 Q1)의 시간 갭이 가장 큰 도전과제.
+
+### 문제 진단
+- 구별 평균 보정(α=1.0)이 최선으로 확인됨 — 더 이상 개선 불가능
+- 하지만 이는 "모든 아파트가 동일한 비율로 상승"한다는 가정 → **너무 단순함**
+
+### 새로운 접근: 다차원 시간 트렌드
+
 ```python
-# 61a(70:30), 61b(90:10) 제출 → 최적 비율 확인
-# 최적 비율 근처에서 75:25, 85:15 추가 제출
-# 이후 시드 가중치 탐색
+# 1. 피처별 시간 추세 추정
+for feature in ['Gu', 'Dong', 'Area_bin', 'Floor_bin', 'Brand']:
+    # 각 그룹의 Train 기간 월별 평균가 추세 → 외삽
+    # Test 월(202601~03) 예측값 = Train 최종값 × (1 + trend_rate)^months
+
+# 2. 구×면적 세그먼트별 시간 트렌드
+# → 강남구 대형은 많이 오르고, 노원구 소형은 적게 오르는 패턴
 ```
 
-### 기대 효과
-- **기대**: 5~15점 (현재 블렌드가 멀리 떨어져있다면)
-- **리스크**: 낮음 (간단한 실험)
+### 실행 계획
+1. `Gu × Area_bin` 세그먼트별 월별 평균가 계산
+2. 각 세그먼트의 시간 트렌드(기울기) 추정
+3. Test 기간 예측 = Skeleton 예측 × 세그먼트별 트렌드 보정계수
+4. 기존 GTR(α=1.0)을 세그먼트별 α로 대체
+
+**기대 효과**: 단순 구별 평균보다 정교한 시간 보정 → **3~8점** 개선
 
 ---
 
-## 제안 3: OOF-Public 갭 활용 Test Distribution Matching ⭐⭐
+## 제안 4: Test Set Feature Structure 활용 (Post-Processing)
 
-### 문제
-OOF 2,191 vs Public 2,087 = 104점 차이. 이는 **Test가 Train보다 예측하기 쉬운 구조**임을 의미.
+Test 531건의 피처 분포를 Train과 비교하여 **체계적인 편향 보정**.
 
-### 해결: 왜 Test가 더 쉬운가?
+### 실행 계획
+1. Test 피처로 Train 샘플의 가중치 재조정 (Kernel Density Matching)
+2. Test 분포에 맞게 Train 예측 보정 (Distribution Alignment)
+3. 특히 고오차 세그먼트(120㎡ 이상, 강남구, 성동구)에 **별도 보정계수** 적용
 
-오차 분석(06-24)에 따르면:
-- 대형(120㎡↑): 오차 상위권 과대표 (전체 2.6%지만 오차 11%)
-- 강남구: 오차 비율 10.7%로 압도적
-- 성동구/용산구: RMSE/평균가 비율 8.1%/6.7%로 최악
-
-→ **Test에 대형/강남구/성동구 샘플이 적다면** OOF보다 Public이 좋은 것.
-
-### 검증 및 활용
-1. Train 샘플의 오차 크기와 Gu/Area의 관계 분석
-2. 오차가 큰 패턴 식별 (예: 강남구 + Area > 120)
-3. Train에서 이 패턴의 모델 가중치를 낮춤 (또는 Test에서 동일 패턴 보정)
-4. Adversarial Validation으로 Test-like Train 샘플 식별 → 가중 학습
-
-### 간단 버전
 ```python
-# 오차 상위 10% 샘플 특성 분석
-train_orig['oof_error'] = abs(cv_pred - train_orig['Target'])
-high_error = train_orig.nlargest(int(len(train_orig)*0.1), 'oof_error')
-print(high_error.groupby('Gu').size().sort_values())
-print(high_error.groupby(pd.cut(high_error['Exclusive_Area'], bins=[0,60,85,120,200])).size())
-```
+# Test 집단별 분포 확인
+test_groups = test.groupby(['Gu', 'Area_bin']).size()
+train_groups = train.groupby(['Gu', 'Area_bin']).size()
+ratio = test_groups / train_groups  # 과대/과소 대표 세그먼트 식별
 
-### 기대 효과
-- **기대**: 5~20점 (Test 분포 차이가 크다면)
-- **리스크**: 중간 (Train에서 가중치 조정 시 CV 신뢰도 하락)
+# 과소 대표 세그먼트 → 해당 그룹 예측에 페널티 부여
+# 과대 대표 세그먼트 → 해당 그룹 예측 가중치 상향
+```
 
 ---
 
-## 제안 4: Rank-Based Ensemble (Robustness) ⭐
+## 실험 우선순위 (7일 기준)
 
-### 문제
-RMSE는 이상치(outlier)에 극도로 민감. 모델 간 예측 분포가 다를 때 단순 평균은 비효율적.
-
-### 해결
-각 모델의 예측을 순위(rank)로 변환 → 평균 → 원래 분포로 역매핑:
-```python
-from scipy.stats import rankdata
-
-rank_preds = np.array([rankdata(p) for p in model_predictions])
-avg_rank = rank_preds.mean(axis=0)
-# Train 분포 매핑
-final = np.percentile(train_orig['Target'], (avg_rank / len(avg_rank)) * 100)
-```
-
-### 기대 효과
-- **기대**: 2~5점 (이상치 완화)
-- **리스크**: 낮음 (기존 예측과 블렌딩 가능)
+| 일차 | 실험 | 비용 | 기대효과 | 설명 |
+|------|------|------|---------|------|
+| **1일차** | Symbolic Regression (PySR) | 로컬 1시간 | **15~30점** | 최고 리스크-리턴, 바로 시작 |
+| **1~2일차** | Skeleton 다양화 11종 | 로컬 2시간 | 5~10점 | 로컬에서 모두 실험 후 Public 확인 |
+| **3일차** | Time Decomposition | 로컬 1시간 | 3~8점 | Skeleton과 병행 가능 |
+| **4일차** | 최적 Skeleton 선별 + 블렌딩 | 제출 3회 | 5~15점 | 상위 실험 결과 취합 |
+| **5~6일차** | Distribution Alignment | 로컬 1시간 | 2~5점 | 마무리용 |
+| **7일차** | 최종 블렌딩 가중치 결정 | 제출 5회 | 0~3점 | 기존 OOT 검증 활용 |
 
 ---
 
-## 제안 5: Test-Time Pseudo Label with Temporal Adaptation ⭐
+## 검증 전략
 
-기존 PL2는 신뢰도 상위 50%를 Train에 추가. 개선점:
-1. **PL2 threshold를 Gu별로 다르게**: 각 Gu의 예측 일치도가 다를 수 있음
-2. **PL2 + 시간 보정**: PL2로 Test 예측 후, 시간 trend로 추가 보정
-3. **Iterative PL with decay**: 첫 PL2로 학습 → 다시 Test 예측 → 일치도 높은 샘플 추가
+OOT(246건)과 naive OOF 모두 한계를 보였으므로:
 
-### 기대 효과
-- **기대**: 3~8점 (PL2 개선 여지)
-- **리스크**: 중간 (transductive bias 증가)
-
----
-
-## 실행 우선순위 (잔여 10일)
-
-| 우선순위 | 실행 | 기대효과 | 시간 | 설명 |
-|:--------:|:-----|:--------:|:----:|:-----|
-| **★★★** | 61a(70:30) + 61b(90:10) 제출 | 5~15점 | 10분 | 즉시 가능, blend 최적화 1차 |
-| **★★★** | Time-Aware Skeleton (Gu별 선형 Trend) | 10~30점 | 30분 | 가장 큰 개선 가능성 |
-| **★★☆** | 오차 패턴 분석 + Test 분포 매칭 | 5~20점 | 20분 | 왜 OOF가 Public보다 나쁜지 이해 |
-| **★★☆** | Bayesian Blend Optimization (시드+GTR) | 5~15점 | 연속 | LB 피드백 활용 |
-| **★☆☆** | Rank-Based Ensemble | 2~5점 | 15분 | 안전한 추가 |
-
-### 제출 계획
-```
-06-28: 61a(70:30) + 61b(90:10) 제출 + Time-Aware Skeleton 로컬 실험
-06-29: Time-Aware Skeleton 결과 확인 → 제출 if 개선
-        blend 최적 비율 확인 → 75:25 or 85:15 제출
-06-30: 오차 패턴 분석 기반 Test 분포 매칭
-        시드 가중치 최적화 (4개 제출)
-07-01: 최종 전략 확정 (1차)
-07-02~07-07: Public LB 관찰 (주 2회, 방어 제출)
-07-08: Final 1 (최선 전략) + Final 2 (방어 전략) 제출
-```
-
-### 최종 제출 전략
-- **Final 1**: Time-Aware Skeleton + 53:47 Blend (최선 성능)
-- **Final 2**: 기존 전략 56 (Blend 53:47 = 80:20) — 방어용
-- **조건**: Final 1이 전략 56보다 Public에서 5점 이상 개선 시 채택, 미만 시 전략 56 유지
+1. **Public LB를 최종 검증 기준**: 구조적 변경(제안 1, 2, 3)은 하루 1건씩 Public 확인
+2. **내부 검증**:
+   - **Time-series CV**: 3-fold 시간순 분할 (Train 내에서)
+   - **Bootstrap OOT**: OOT 246건에서 Bootstrap 100회 → 분포 추정
+   - **Adversarial Validation**: Train/Test 구분 모델의 AUC 변화 추적 (이미 0.505로 낮음)
+3. **최종 선택**: 4개 제안 중 Public이 가장 개선된 조합 선택
 
 ---
 
-**작성**: opencode (2026-06-28)
-**특이사항**: 성능-다양성 딜레마로 기존 모델 구조는 최적점. 46점 점프는 **시간 외삽(time extrapolation) 또는 Test 분포 매칭**으로만 설명 가능. Time-Aware Decomposition이 가장 유망한 돌파구. 당장 61a/61b 제출로 blend 최적화 시작할 것.
+## 리스크 관리
+
+| 리스크 | 대응 |
+|--------|------|
+| Symbolic Regression이 유효한 수식을 못 찾음 | → Skeleton 다양화로 전환, 시간 낭비 최소화 (1일 제한) |
+| Skeleton 다양화가 OOT는 개선 but Public 악화 (76번 반복) | → 각 Skeleton 단독 Public 확인 → 통과한 것만 블렌딩 |
+| 2위도 계속 개선 중 | → 우리의 개선폭이 더 커야 함. 구조적 돌파구(제안1)가 유일한 해법 |
+| 제출 횟수 부족 | → 로컬 검증 강화 (Bootstrap OOT), Public은 최종 확인용 |
+
+---
+
+## 결론
+
+**가장 추천**: **제안 1 (Symbolic Regression DGP 역공학)** → 데이터가 100% 합성이므로 반드시 DGP 수식이 존재합니다. 27점 차이는 점진적 개선이 아닌 구조적 발견으로만 극복 가능합니다.
+
+**차선**: **제안 2 (Skeleton 다양화)** → 과적합 위험이 낮은 Skeleton 계층에서 다양성을 확보하는 안전한 접근.
+
+**두 제안은 병행 가능**: 1일차에 PySR 실행 (로컬, 1시간) + Skeleton 11종 동시 학습 → 이후 결과 취합.

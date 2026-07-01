@@ -1,240 +1,356 @@
-# Copilot 조언 보고서 - 2026-06-27
+# coPilot 제언: 시간 외삽과 Residual 비선형성 (2026-07-01)
 
-## 📍 상황 분석
-
-**현황**: Public 4위, RMSE 2,094.9 (전략 45)  
-**전 단계**: 전략 28(2,097)에서 **-2점 개선**  
-**핵심 발견**: ExtraTrees가 상관 0.963으로 다른 오차 패턴 생성 (단독 OOF 3,561이지만 다양성 가치 있음)
+> **핵심 아이디어**: Gemini는 오차 세그먼트, opencode는 DGP 함수를 본다. coPilot은 **시간 축의 외삽 편향**과 **Residual 구조의 비선형성**을 본다.
 
 ---
 
-## 🎯 Q1 답변: ExtraTrees 원리 확장
+## 진단: 현재 파이프라인의 맹점
 
-### 진단: 왜 ExtraTrees만 성공했나?
+### 문제 1: Time Extrapolation Bias
+```
+Train: 2024-01-01 ~ 2025-12-31
+OOT:   2025-10-01 ~ 2025-12-31  (마지막 3개월, 246건)
+Test:  2026-01-01 ~ 2026-03-31  (미래 3개월, 531건)
 
-**ExtraTrees의 성공 원리**:
-- 분할점 선택: **무작위** (vs GB의 최적 분할점)
-- 결과: CB/LGB와 **완전히 다른 오차 패턴**
-- 상관 0.963 (매우 낮음) → 앙상블에서 높은 가치
-
----
-
-### 같은 원리의 확장: 2가지 축
-
-#### **축 1: LGBM `extra_trees=True` 옵션** ✅ **우선순위 1** (3시간)
-
-ExtraTrees의 "무작위 분할" 원리를 native LGBM에 적용:
-
-```python
-# 변형 1: 약한 다양성
-LGBM(
-    extra_trees=True,      # 분할점 무작위 선택
-    max_depth=8,
-    num_leaves=64,
-    feature_fraction=0.8,
-    seed=42
-)
-
-# 변형 2: 강한 다양성
-LGBM(
-    extra_trees=True,
-    max_depth=10,
-    num_leaves=128,
-    feature_fraction=0.7,
-    seed=42
-)
+현황: 
+- 56, 63, 69는 모두 2025년 데이터로 학습된 모델
+- Test는 2026년 (시간상 6개월 미래)
+- OOT(2025 Q4)와 Test(2026 Q1) 사이에 "시간 점프"가 있음
+- 각 컴포넌트의 "시간 외삽 강도"는 다를 수 있음
 ```
 
-**기대효과**: +1~3점  
-**검증**: OOF 상관 < 0.97이면 기대 높음
+**발견**: 현재 50:30:20은 전체 평균 RMSE 기준이지만, **시간 축에 대한 안정성**은 고려하지 않음.
+
+### 문제 2: Residual 결합의 선형성 가정
+```
+현재: pred_final = 0.5 * pred_56 + 0.3 * pred_63 + 0.2 * pred_69
+      = Ridge(pred_56, pred_63, pred_69) 선형 조합
+
+하지만:
+- 각 컴포넌트의 오차가 다른 "기하학적 구조"를 가질 수 있음
+- 오차 벡터 공간에서 비선형 결합이 더 효율적일 수 있음
+- 예: pred_56이 "과대 추정하는 경향"과 "과소 추정하는 경향"이 구간마다 다름
+     → 단순 가중치 선형 조합으로는 이를 못 잡음
+```
 
 ---
 
-#### **축 2: KernelRidge (선형 모델의 비선형화)** ✅ **우선순위 2** (2시간)
+## 제언 3가지 (Gemini/opencode와 다른 축)
 
-선형 Ridge를 고차원 feature space로 변환 → 트리 기반과 완전히 다른 구조:
+### **🎯 제언 1: Time Extrapolation Robustness Scoring**
 
+**개념:**
+각 컴포넌트가 "시간을 얼마나 잘 외삽하는가"를 점수화 → 그 점수에 따라 가중치 재조정.
+
+**구체적 실행:**
+
+#### Step 1: 시간 단계별 OOT 분할 (시계열 특성 활용)
+```python
+# OOT (2025-10-01 ~ 2025-12-31, 246건)를 3개월로 분할
+OOT_M10 = OOT[date < '2025-11-01']  # 246 * 1/3
+OOT_M11 = OOT[(date >= '2025-11-01') & (date < '2025-12-01')]
+OOT_M12 = OOT[date >= '2025-12-01']  # 가장 미래(Test와 가장 가까움)
+
+# 각 구간에서 RMSE 계산
+rmse_56_m10, rmse_56_m11, rmse_56_m12 = [...]
+rmse_63_m10, rmse_63_m11, rmse_63_m12 = [...]
+rmse_69_m10, rmse_69_m11, rmse_69_m12 = [...]
+```
+
+#### Step 2: 시간 트렌드 분석 (기울기 계산)
+```python
+# 각 컴포넌트의 "시간에 따른 성능 변화" 측정
+# 만약 RMSE가 악화 추세라면 → Test에서도 악화될 가능성 높음
+
+# 선형 회귀: time_axis(0, 1, 2) vs RMSE
+slope_56 = polyfit([0, 1, 2], [rmse_56_m10, rmse_56_m11, rmse_56_m12], 1)[0]
+slope_63 = polyfit([0, 1, 2], [rmse_63_m10, rmse_63_m11, rmse_63_m12], 1)[0]
+slope_69 = polyfit([0, 1, 2], [rmse_69_m10, rmse_69_m11, rmse_69_m12], 1)[0]
+
+# 해석:
+# slope < 0 (개선 추세): 좋음, 외삽에 강함 → 가중치 UP
+# slope > 0 (악화 추세): 위험, 외삽에 약함 → 가중치 DOWN
+# slope ≈ 0 (평탄): 안정적
+```
+
+#### Step 3: Robustness 가중치 조정
+```python
+# Baseline: w_56=0.5, w_63=0.3, w_69=0.2
+
+# Slope 기반 penalizer (0~1 범위)
+robustness_56 = 1.0 if slope_56 <= 0 else (1.0 - 0.3 * abs(slope_56))
+robustness_63 = 1.0 if slope_63 <= 0 else (1.0 - 0.3 * abs(slope_63))
+robustness_69 = 1.0 if slope_69 <= 0 else (1.0 - 0.3 * abs(slope_69))
+
+# 재정규화
+w_56_adj = 0.5 * robustness_56 / (0.5 * robustness_56 + 0.3 * robustness_63 + 0.2 * robustness_69)
+w_63_adj = 0.3 * robustness_63 / (...)
+w_69_adj = 0.2 * robustness_69 / (...)
+
+pred_final = w_56_adj * pred_56 + w_63_adj * pred_63 + w_69_adj * pred_69
+```
+
+**기대 효과:** +3~8점
+- **왜**: 시간 안정성을 명시적으로 모델링 → 6개월 미래 외삽의 불확실성 감소
+- **예시**: 만약 pred_69(One-Hot)가 최근 악화 추세라면 down-weight, pred_56이 안정적이면 up-weight
+
+**검증:**
+- OOT_M12 (2025-12월, Test와 가장 유사)에서 새 가중치 성능 확인
+- 개선 신호 → Public 제출
+
+---
+
+### **🎯 제언 2: Residual Nonlinear Stacking (오차 공간의 비선형 구조)**
+
+**개념:**
+각 컴포넌트의 residuals를 다시 한 번 **비선형 변환** → 결합. 선형 Ridge의 한계 극복.
+
+**구체적 실행:**
+
+#### Step 1: Residual Matrix 구성
+```python
+# Train에서:
+residual_56 = y_train - pred_56_train
+residual_63 = y_train - pred_63_train
+residual_69 = y_train - pred_69_train
+
+# Shape: (1969, 3) matrix
+residual_matrix = np.column_stack([residual_56, residual_63, residual_69])
+```
+
+#### Step 2: Nonlinear 변환 - 3가지 방법 병렬 테스트
+
+**방법 A: Kernel Ridge Regression (오차 공간)**
 ```python
 from sklearn.kernel_ridge import KernelRidge
 
-# RBF 커널
-kr = KernelRidge(kernel='rbf', alpha=1.0, gamma=0.1)
+# 입력: 3개 컴포넌트의 예측값
+# 출력: 최종 예측값
+# 커널: RBF or Poly (오차 공간에서의 비선형 관계 포착)
 
-# 또는 Poly 커널
-kr = KernelRidge(kernel='poly', degree=3, alpha=1.0)
+kr = KernelRidge(kernel='rbf', alpha=10, gamma=0.01)
+kr.fit(np.column_stack([pred_56_train, pred_63_train, pred_69_train]), y_train)
+pred_final_kr = kr.predict(np.column_stack([pred_56_test, pred_63_test, pred_69_test]))
 ```
 
-**기대효과**: +0~2점  
-**검증**: 상관만 < 0.97이면 OK (RMSE 형편없어도)
-
----
-
-### 실행 순서 (병렬 가능)
-
-```
-Step 1: LGBM extra_trees 2~3종 CV (3시간)
-Step 2: KernelRidge 3종 CV (2시간) [병렬]
-Step 3: 상관 < 0.97 모델 필터링
-Step 4: 앙상블 재구성 (전략 46)
-Step 5: 검증 & 제출 (6/28~6/29)
-```
-
----
-
-## 🎯 Q2 답변: 1~3위 격차 분석
-
-### 격차 추정 (2~5점)
-
-상위권이 우리가 놓친 부분:
-
-#### **A. 더 많은 모델 다양성**
-우리: CB, LGB, ExtraTrees 3종류  
-상위권 추측: CB, LGB, XGB, ET, KernelRidge, SVR, Ridge-poly 등 5~6종
-
-#### **B. 구간별 가중치 최적화** ⭐ (우리가 놓친 부분)
-- 고가(>50 percentile) vs 저가: 다른 가중치
-- 대형(>100m²) vs 소형: 다른 가중치
-- **구별 Ridge 가중치 독립 계산**
-- **기대효과**: +2~5점 (가장 큰 개선폭)
-
-#### **C. 합성 데이터 특성 역이용**
-- Price 분포 패턴
-- Correlation 구조 최적화
-- Heteroscedastic noise 모델링
-- **기대효과**: +1~2점
-
----
-
-### 우리 놓친 부분: 구간별 오차 분석 ✅
-
-**즉시 실행 (1시간)**:
+**방법 B: Decision Tree Regressor (오차의 규칙 발견)**
 ```python
-# Q: ET 2개가 정말 유효한가? 특정 구간에만?
+from sklearn.tree import DecisionTreeRegressor
 
-# 1) 고가 구간(Price > 50 percentile) 분석
-rmse_high_et = RMSE(pred_et[price > p50], y[price > p50])
-rmse_high_cb = RMSE(pred_cb[price > p50], y[price > p50])
+# Ridge 대신 shallow tree 사용
+# 각 컴포넌트의 오차 크기에 따라 가중치를 adaptively 조정
+tree = DecisionTreeRegressor(max_depth=3, min_samples_leaf=10)
+tree.fit(np.column_stack([pred_56_train, pred_63_train, pred_69_train]), y_train)
+pred_final_tree = tree.predict(...)
 
-# 2) 대형 구간(Area > 100m²) 분석  
-rmse_large_et = RMSE(pred_et[area > 100], y[area > 100])
-
-# 3) 구별 성능 비교
-for gu in gus:
-    print(f"{gu}: RMSE비율 {rmse_et[gu]/rmse_cb[gu]:.3f}")
+# 해석: "pred_56이 크면 이쪽 가중치, pred_63이 크면 저쪽 가중치" 같은 규칙 자동 발견
 ```
 
-**발견 가능한 패턴**:
-- "고가만 효과" → 가중치 재설계
-- "전체 균등" → 현 전략 정상
-
----
-
-## 🎯 Q3 답변: Final Submission 구성
-
-### 최종 권장안
-
-#### **Final 1 (공격형): 전략 45 그대로** ✅
+**방법 C: Neural Network (1-2 layer)**
 ```python
-pred_final1 = pred_strategy_45  # 2,094.9
+import tensorflow as tf
+
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(16, activation='relu', input_shape=(3,)),
+    tf.keras.layers.Dropout(0.1),
+    tf.keras.layers.Dense(1)
+])
+model.compile(optimizer='adam', loss='mse')
+model.fit(
+    np.column_stack([pred_56_train, pred_63_train, pred_69_train]), 
+    y_train,
+    epochs=50,
+    batch_size=32,
+    validation_split=0.2
+)
 ```
 
-#### **Final 2 (방어형): 45:28 = 70:30 블렌딩** ✅
+#### Step 3: OOT 검증 + 최종 선택
 ```python
-pred_final2 = 0.7 * pred_45 + 0.3 * pred_28
+# 각 방법의 OOT RMSE 비교
+rmse_kr = evaluate_on_oot(kr)      # 예: 2,594
+rmse_tree = evaluate_on_oot(tree)  # 예: 2,596
+rmse_nn = evaluate_on_oot(nn)      # 예: 2,593
 
-# 이유:
-# - 45의 공격성 유지 (70%)
-# - 28의 보수성으로 리스크 흡수 (30%)
-# - Private 변동성 완화
-# - Gemini & ChatGPT 권장과 일치
+# 가장 낮은 것 선택 (또는 앙상블)
+best_meta = [kr, tree, nn][argmin([rmse_kr, rmse_tree, rmse_nn])]
+```
+
+**기대 효과:** +2~6점
+- **왜**: 선형 Ridge는 컴포넌트 간 복잡한 상호작용을 못 잡음. 비선형 메타 모델은 "이 상황에서는 56, 저 상황에서는 63"이라는 adaptive 가중치 학습 가능
+- **예시**: 예측값이 크면 과소추정 보정(pred_63 up), 작으면 과대추정 보정(pred_69 down) 같은 세밀한 조정
+
+**검증:**
+- OOT 5-fold에서 cross-validation RMSE 계산 (과적합 방지)
+- 개선 신호 → Public 제출
+
+---
+
+### **🎯 제언 3: Synthetic Data의 "생성 과정 가설" 기반 Mixture Modeling**
+
+**개념:**
+합성 데이터 = 알려지지 않은 생성 과정(DGP). 가능한 여러 생성 가설을 세우고, 각각에 최적화된 파이프라인 구성 → 사후적 혼합.
+
+**구체적 실행:**
+
+#### 가설 1: Linear + Tree Residuals (가장 그럴듯)
+```
+Price = LinearBase(features) + TreeResiduals(nonlinear_terms) + Noise
+
+의미:
+- 기본 가격은 features의 선형 결합 (면적 × 기본단가 + 구별 프리미엄)
+- 비선형성은 tree 모델이 잡음 (interaction, 비선형 trend)
+- 목표: Linear + Tree combination 최적화
+
+실행:
+pred_hypothesis_1 = 0.6 * pred_linear_skeleton + 0.4 * pred_tree_residual
+```
+
+#### 가설 2: Piecewise Linear (구간별 다른 규칙)
+```
+Price = {
+  LinearModel_Gu1 if Gu == 'Gu1'
+  LinearModel_Gu2 if Gu == 'Gu2'
+  ...
+}
+
+의미:
+- 각 구마다 가격 책정 논리가 완전히 다름 (강남 ≠ 강북)
+- Per-Gu Skeleton의 아이디어 강화
+
+실행:
+pred_hypothesis_2 = Per-Gu Ridge (기존 전략63의 pure 버전)
+```
+
+#### 가설 3: Multiplicative (기하학적 복합)
+```
+Price = BasePrice * LocationFactor * TimeFactor * NoiseFactor
+
+의미:
+- 가격은 기본값의 곱(multiplicative) 조합
+- Log-price 변환이 이를 선형으로 만듦
+
+실행:
+pred_hypothesis_3 = exp(Ridge(log_y, log_features))
+```
+
+#### Step 1: 각 가설별 파이프라인 구성
+```python
+pipeline_h1 = 0.6 * skeleton_linear + 0.4 * gbdt_residuals
+pipeline_h2 = per_gu_skeleton
+pipeline_h3 = log_price_linear_model
+
+oof_h1 = cross_validate(pipeline_h1, cv=5)  # RMSE: 2,650
+oof_h2 = cross_validate(pipeline_h2, cv=5)  # RMSE: 2,705
+oof_h3 = cross_validate(pipeline_h3, cv=5)  # RMSE: 2,720
+```
+
+#### Step 2: Mixture Weight (사후 확률)
+```python
+# OOF RMSE 기반 가중치 (더 나은 가설에 더 높은 가중치)
+likelihood_h1 = exp(-oof_h1^2 / sigma^2)  # Gaussian likelihood
+likelihood_h2 = exp(-oof_h2^2 / sigma^2)
+likelihood_h3 = exp(-oof_h3^2 / sigma^2)
+
+# 정규화
+w_h1 = likelihood_h1 / (likelihood_h1 + likelihood_h2 + likelihood_h3)
+w_h2 = likelihood_h2 / (...)
+w_h3 = likelihood_h3 / (...)
+
+# 최종
+pred_final = w_h1 * pipeline_h1 + w_h2 * pipeline_h2 + w_h3 * pipeline_h3
+```
+
+**기대 효과:** +2~5점
+- **왜**: 하나의 가설(선형, Per-Gu, 비선형)에 집중하는 것보다 여러 가설을 확률적으로 혼합하면 robust
+- **예시**: 만약 실제 DGP가 "구마다 다른 선형 규칙"(가설2)이면 w_h2가 높아져서 자동으로 강조됨
+
+**검증:**
+- OOT에서 mixture weight 검증
+- 개선 신호 → Public 제출
+
+---
+
+## 실행 우선순위 & 일정
+
+| 단계 | 작업 | 소요시간 | 병렬 가능 | 제출 |
+|------|------|--------|---------|------|
+| **A (우선)** | 제언 1: Time Robustness Score 계산 & 가중치 재조정 | 1~2시간 | - | 회당 1회 |
+| **B (병렬)** | 제언 2: Residual Nonlinear (KR/Tree/NN 3종 테스트) | 2~3시간 | A와 병렬 | 회당 1~2회 |
+| **C (병렬)** | 제언 3: Hypothesis Mixture 구성 | 2시간 | A/B와 병렬 | 회당 1회 |
+| **D (종합)** | A+B+C 중 최고 결과 선택 또는 앙상블 | 1시간 | - | 최종 1~2회 |
+
+**타이밍:**
+```
+2026-07-01 (오늘):   제언 1 계산 시작 (OOT 시간별 분석)
+2026-07-02~03:       제언 2 (RKR/Tree/NN 학습)
+2026-07-03~04:       제언 3 (Mixture 구성)
+2026-07-04~07:       결과 통합 & 최종 제출
+```
+
+**제출 전략:**
+- 하루 5회 × 7일 = 35회 (충분)
+- 각 아이디어: 로컬 OOT 검증 후 유의미하면 즉시 제출
+- Fallback: 제언 1 (Time Robustness)만 성공해도 +3점 기대
+
+---
+
+## 예상 개선폭
+
+### 낙관 시나리오
+```
+현재: 2,028.35
++ 제언 1 (Time Robustness): +3~5점 → 2,023~2,025
++ 제언 2 (Nonlinear Stacking): +2~4점 → 2,019~2,023
++ 제언 3 (Mixture): +1~3점 → 2,016~2,022
+→ 최종: ~2,018 (2위 범위)
+```
+
+### 기대값 시나리오
+```
+현재: 2,028.35
++ 제언 1 성공 (Time): +3점 → 2,025.35
++ 제언 2 부분 성공 (Nonlinear): +1~2점 → 2,023~2,024
++ 제언 3 미미 → 0점
+→ 최종: ~2,024 (4위 근처)
+```
+
+### 보수 시나리오
+```
+현재: 2,028.35
++ 제언 1 노이즈만 발견 → +0~1점
++ 제언 2 과적합 → 0점
++ 제언 3 개선 없음 → 0점
+→ 최종: ~2,027 (현 위치 유지)
 ```
 
 ---
 
-## 📅 실행 계획
+## 이것이 다른 제안과 다른 이유
 
-### **Week 1 (6/27~6/29)**
-
-```
-6/27-28:
-  - LGBM extra_trees 2종 검증
-  - KernelRidge 검증
-  - 상관 확인
-
-6/29: 제출 1
-  - 46 또는 45 제출 (검증 결과에 따라)
-```
-
-### **Week 2 (6/30~7/2)**
-
-```
-6/30:
-  - 구간별 오차 분석
-  - 가중치 조정 (선택)
-
-7/1-7/2: 제출 2
-  - 45:28=70:30 또는 신규 전략
-```
-
-### **Week 3+ (7/3~7/8)**
-
-```
-7/3~7/7: 관찰 기간
-  - Public LB 모니터링
-  - 최종 의사결정 준비
-
-7/8: 최종 제출 (2개)
-  - 09:00: Final 1 (45)
-  - 17:00: Final 2 (45:28 또는 신규)
-```
-
----
-
-## 핵심 체크리스트
-
-- [ ] LGBM extra_trees 2~3종 CV (3시간)
-- [ ] KernelRidge CV (2시간)
-- [ ] 상관 < 0.97 필터링
-- [ ] 구간별 오차 분석 (1시간)
-- [ ] 앙상블 재구성 (전략 46)
-- [ ] OOF/OOT 검증
-- [ ] 6/29 제출 1, 7/1~2 제출 2
-
----
-
-## 📊 기대 개선폭
-
-| 항목 | 기대 | 우선순위 | 시간 |
-|------|------|--------|------|
-| LGBM extra_trees | +1~3점 | 1 | 3h |
-| KernelRidge | +0~2점 | 2 | 2h |
-| 구간별 분석 | 근거 수집 | 2 | 1h |
-| **합계** | **+1~5점** | | 6h |
-
-**최종 목표**: 2,094.9 → 2,090 이상 도달
+| 관점 | Gemini | opencode | **coPilot** |
+|------|--------|----------|-----------|
+| **초점** | 오차 세그먼트 (고가/저가) | DGP 함수 발견 | **시간 축 + 오차 공간 구조** |
+| **축** | 피처 공간 (면적×가격) | 함수 공간 (식) | **시간축 + 기하학적 구조** |
+| **기대점** | 세그먼트별 오차 최소화 | 생성함수 역공학 | **외삽 안정성 + 비선형 조합** |
+| **리스크** | 세그먼트 정의 자의성 | DGP 명확화 어려움 | **메타모델 과적합** |
 
 ---
 
 ## 최종 메시지
 
-**4위(2,094.9) → 상위권 진입의 경로**:
+**핵심 통찰:**
+1. **OOT(246건) vs Test(531건)** 사이의 "시간 갭"을 무시하고 있음
+2. **Ridge 선형 결합**은 각 컴포넌트의 오차 구조(오버쉈팅 패턴, 세그먼트별 편향)를 못 잡음
+3. **합성 데이터의 생성 가설**이 여러 개 있을 수 있는데, 하나만 사용 중
 
-1. **ExtraTrees 원리 확장** (LGBM-ET + KernelRidge)
-   - 검증: 5시간 내 완료
-   - 기대: +1~3점
-   - 확률: 중상
+**우리의 차별성:**
+- 시간을 **명시적으로** 모델링 (trend, extrapolation robustness)
+- Residual을 **비선형 공간**에서 재조합 (메타 모델의 능력 확장)
+- 생성 가설을 **확률적 혼합** (robustness, diversity)
 
-2. **구간별 오차 분석** (고가/대형 특화)
-   - 기대: +0~3점 추가
-   - 확률: 중
-
-3. **Final 전략** (공격+방어 조합)
-   - Final 1: 45 (공격)
-   - Final 2: 45:28=70:30 (방어)
+7일 안에 "구조적 돌파구"를 원한다면, **이미 있는 컴포넌트를 더 영리하게 조합하는 것**만으로도 +3~5점은 가능합니다.
 
 ---
 
-**작성**: Copilot (2026-06-27)  
-**신뢰도**: 중상 (ExtraTrees 성공 재현 가능성)  
-**주의**: Private LB 변동성은 예측 불가. 최악의 경우 45 유지로 방어 필요
-
+**작성**: coPilot (Copilot CLI) | **날짜**: 2026-07-01 | **버전**: v2.0 (Creative Approach)

@@ -11,6 +11,15 @@
 
 ## 현재 최선 전략
 
+**전략 80: 3-way 블렌딩 + pred_47 단독(BLEND_W53=0.0), 50:30:20** (Public RMSE **2,028.04**, 2026-07-02, 5위)
+
+- Kaggle 노트북: `kaggle_notebooks/80_pred47_blend.py`
+- 전략75에서 pred_53:pred_47 비율을 80:20→0:100으로 변경. OOT 탐색: pred_47이 단독으로 더 낮은 RMSE
+- OOT 예측 개선 5.4점이었으나 Public 실제 개선은 **0.36점** — 극도로 평탄한 구간임을 확인
+- 사실상 전략75와 동급이지만 Best Score 기준으로 신규 최선값
+
+**이전 최선:**
+
 **전략 75: 3-way 블렌딩 56(GBDT+GTR) + 63(Per-Gu Skeleton) + 69(One-Hot Skeleton) = 50:30:20** (Public RMSE **2,028.4**, 2026-07-01, 5위)
 
 - Kaggle 노트북: `kaggle_notebooks/75_3way_blend.py`
