@@ -1,8 +1,8 @@
 """
-84 3-WAY BLEND v5c: Winsorized Residual 혼합 (Per-Gu ±2.0, One-Hot ±2.5)
+84 3-WAY BLEND v5d: Winsorized Residual ±3.0*std
 전략81(pred_47 4시드, Public 2,028.01)에서 GBDT 잔차 학습 타깃을 Winsorize.
 극단 잔차(Seongdong/Yongsan 등 고오차 구)가 잔차 GBDT를 왜곡하는 문제 완화.
-Per-Gu는 ±2.0(OOT 최선), One-Hot은 ±2.5(OOT 2위) — 컴포넌트별 다른 클리핑.
+±2.0(2027.01) → ±2.5(2025.01) 방향으로 더 느슨한 ±3.0 테스트. Public에서 느슨할수록 좋은 패턴 확인.
 pred_63, pred_69 두 Skeleton 컴포넌트 모두 적용.
 """
 import os
@@ -448,7 +448,7 @@ print(f"  Per-Gu Skeleton OOF RMSE: {np.sqrt(np.mean((skeleton_oof_pergu - y_tru
 y_resid_pergu_raw = (y_true_orig - skeleton_oof_pergu).astype(float)
 # Winsorize: 극단 잔차 클리핑 (±2.0*std). OOT에서 2,647→2,642로 5점 개선 확인.
 _std = float(np.std(y_resid_pergu_raw))
-y_resid_pergu = np.clip(y_resid_pergu_raw, -2.0 * _std, 2.0 * _std).astype(float)
+y_resid_pergu = np.clip(y_resid_pergu_raw, -3.0 * _std, 3.0 * _std).astype(float)
 y_resid_up_pergu = (y_resid_pergu / area_train).astype(float)
 print(f"  Winsorized Per-Gu residual: std={_std:.0f}, clip={2.0*_std:.0f}, clipped={np.sum(np.abs(y_resid_pergu_raw)>2.0*_std)}건")
 
@@ -496,9 +496,9 @@ print(f"  One-Hot Skeleton OOF RMSE: {best_rmse_skel:,.0f} (alpha={best_alpha_sk
 
 y_resid_oh_raw = (y_true_orig - skeleton_oof_oh).astype(float)
 _std_oh = float(np.std(y_resid_oh_raw))
-y_resid_oh = np.clip(y_resid_oh_raw, -2.5 * _std_oh, 2.5 * _std_oh).astype(float)
+y_resid_oh = np.clip(y_resid_oh_raw, -3.0 * _std_oh, 3.0 * _std_oh).astype(float)
 y_resid_up_oh = (y_resid_oh / area_train).astype(float)
-print(f"  Winsorized One-Hot residual: std={_std_oh:.0f}, clipped={np.sum(np.abs(y_resid_oh_raw)>2.5*_std_oh)}건")
+print(f"  Winsorized One-Hot residual: std={_std_oh:.0f}, clipped={np.sum(np.abs(y_resid_oh_raw)>3.0*_std_oh)}건")
 
 resid_test_oh, resid_oof_oh = residual_gbdt(
     X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx, y_resid_oh, y_resid_up_oh,
