@@ -126,3 +126,48 @@
 - opencode: 새 아이디어 제공 강점
 - Copilot: 요약만
 - **서로 다른 AI의 아이디어를 조합했을 때 시너지 발생** (원본스케일 + 평당가 + PL2)
+
+---
+
+## 2026-06-28 (대회 7일차, Public 6위 2,086.6)
+
+### 질문
+3위가 2,073→2,027로 46점을 단번에 개선 → 우리도 비슷한 점프를 하려면?
+
+### 답변 요약
+- Gemini: **Skeleton+GBDT 잔차 하이브리드** + 고오차 세그먼트 가중치 → **채택, 핵심 기여**
+- ChatGPT: 시간 외삽 보정(temporal adapter), blend 탐색 → 부분 채택
+- opencode: 시간 외삽 분석, OOF-Public 갭 원인 분석 → 참고
+
+### 결과
+Gemini의 Skeleton+GBDT 잔차 아이디어 채택 → 전략 63(One-Hot Skeleton), 69(Per-Gu), 72, 75로 이어짐 (Public 2,087→2,028 개선, 핵심 돌파구)
+
+### 상세
+- 질문 파일: `docs/advisor_question_0628.md`
+- Gemini 답변: `gemini-Plan.md`
+
+---
+
+## 2026-07-01 (대회 10일차, Public 5위 2,028.4)
+
+### 현황
+3-way 블렌딩(56+63+69, 50:30:20)으로 2,028.4 달성. 2위가 2,000.87로 격차가 큼.
+
+### 질문
+2위를 따라잡고 Under 2000을 달성하려면 어떤 구조적 돌파구가 필요한가?
+
+### 답변 요약
+- Gemini: Log-Log Skeleton(DGP 구조화) + 고오차 세그먼트별 가중치
+- opencode: PySR Symbolic Regression(DGP 역공학), Skeleton 다양화 11종
+- Copilot: Time Robustness Scoring(월별 안정성), Residual Nonlinear Stacking
+
+### 결과
+- **PySR**: 정수 인코딩 문제로 실패 (RMSE 4,734 — 현재 모델보다 나쁨)
+- **Nonlinear Meta**: KernelRidge/Tree 전부 선형 Ridge보다 나쁨 → 폐기
+- **Time Robustness**: 월별 RMSE 분석, 재조정 가중치 OOT 동일 → 효과 없음
+- **Log-Log Skeleton**: OOF +164점 개선, OOT -360점 악화 → 폐기
+- **pred_47 비율 변경**: BLEND_W53=0.8→0.0으로 Public 0.36점 소폭 개선
+
+### 상세
+- 질문 파일: `docs/advisor_question_0701.md`
+- Gemini 답변: `gemini-Plan.md`, opencode: `opencode-Plan.md`, Copilot: `coPilot-Plan.md`
