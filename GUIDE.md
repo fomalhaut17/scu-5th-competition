@@ -11,12 +11,17 @@
 
 ## 현재 최선 전략
 
-**전략 81: 3-way 블렌딩 + pred_47 4시드 평균(BLEND_W53=0.0), 50:30:20** (Public RMSE **2,028.01**, 2026-07-02, 5위)
+**전략 82: 3-way 블렌딩 + Winsorized Residual (±2.0*std)** (Public RMSE **2,027.01**, 2026-07-02, 5위)
 
-- Kaggle 노트북: `kaggle_notebooks/81_pred47_4seed.py`
-- pred_47(PL2)을 seed=42 단독→[42,123,456,789] 4시드 평균으로 전환 (pred_53처럼)
-- Public 개선 **0.03점** — 사실상 소음 수준. 이 방향은 완전히 소진됨
-- **현재 모델 아키텍처 내에서 추가 개선이 거의 불가능한 상태** — 구조적 돌파구 필요
+- Kaggle 노트북: `kaggle_notebooks/82_winsorized_resid.py`
+- 전략81(pred_47 4시드, 2028.01) 기반 — GBDT 잔차 학습 타깃을 ±2.0*std로 클리핑
+- pred_63(Per-Gu Skeleton), pred_69(One-Hot Skeleton) 두 컴포넌트 모두 적용
+- OOT: skeleton+1시드 기준 2,647.5 → 2,642.3 (+5점), Public -1.00점 개선 (OOT:Public ≈ 5:1 비율)
+- CoPilot 제안 "Winsorized Residual"을 구현, 3조언자 중 유일하게 실제 개선 확인됨
+
+**이전 최선:**
+
+**전략 81: pred_47 4시드 평균(BLEND_W53=0.0), 50:30:20** (Public RMSE **2,028.01**, 2026-07-02, 5위)
 
 **이전 최선:**
 
