@@ -11,12 +11,17 @@
 
 ## 현재 최선 전략
 
-**전략 82: 3-way 블렌딩 + Winsorized Residual (±2.0*std)** (Public RMSE **2,027.01**, 2026-07-02, 5위)
+**전략 84: 3-way 블렌딩 + Winsorized Residual (±3.0*std)** (Public RMSE **2,024.88**, 2026-07-02, 5위)
 
-- Kaggle 노트북: `kaggle_notebooks/82_winsorized_resid.py`
-- 전략81(pred_47 4시드, 2028.01) 기반 — GBDT 잔차 학습 타깃을 ±2.0*std로 클리핑
-- pred_63(Per-Gu Skeleton), pred_69(One-Hot Skeleton) 두 컴포넌트 모두 적용
-- OOT: skeleton+1시드 기준 2,647.5 → 2,642.3 (+5점), Public -1.00점 개선 (OOT:Public ≈ 5:1 비율)
+- Kaggle 노트북: `kaggle_notebooks/84_winsorized_mix.py`
+- Winsorized Residual 클리핑 스윕: raw(2028.01) → ±2.0(2027.01) → ±2.5(2025.01) → **±3.0(2024.88)**
+- 개선폭 급감 중: -1.00 → -2.00 → **-0.13** — ±3.0 근처가 최적점일 가능성 높음
+- OOT와 Public 방향이 반대: OOT는 ±2.0이 최선, Public은 ±3.0(더 느슨)이 최선
+- 내일 ±4.0 또는 ±2.8 시도로 최적점 확인 예정
+
+**이전 최선:**
+
+**전략 82: Winsorized ±2.0*std** (Public RMSE **2,027.01**) / **전략 83: ±2.5*std** (Public RMSE **2,025.01**)
 - CoPilot 제안 "Winsorized Residual"을 구현, 3조언자 중 유일하게 실제 개선 확인됨
 
 **이전 최선:**
