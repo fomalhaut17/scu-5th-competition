@@ -89,10 +89,12 @@
 ## 답변
 
 #### Grok
-- (대기 중)
+- **요약**: 11월 conditional 모델링 + Per-Dong Skeleton + PL2 신뢰도 3-tier blending. 2위가 11월 구조 + locality를 먼저 포착했을 가능성 높다고 진단.
+- 검증 결과: Per-Dong OOF 2,877 (Per-Gu 2,690보다 188점 나쁨 — 동당 ~82건 과적합). 월별 잔차 편향 <0.5%로 소음 수준 → 이 방향들 효과 없음 확인.
 
 #### ChatGPT
-- (대기 중)
+- **요약**: Residual Similarity Matrix + Month Expert Ensemble + 11월 DGP 분석이 핵심. 새 알고리즘보다 잔차 구조 재평가 권장.
+- 검증 결과: LGB↔ET 잔차상관 0.65 (실제 다양성 확인). 월별 잔차 편향 <0.5% (모델이 이미 학습). Month Expert는 추가 효과 없을 것으로 판단.
 
 #### Perplexity
 - (대기 중)
