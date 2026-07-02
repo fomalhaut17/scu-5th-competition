@@ -1,0 +1,533 @@
+"""
+92 OUTLIER FIX: 전략91(기하평균 블렌딩, Public 2,024.20) + 훈련 이상치 5건 복원.
+DGP 역공학(2026-07-02)으로 확정된 사실: 생성기가 5개 행(TR_1537/1114/1064/2287/1447)의
+가격을 정수×0.4로 깎아 이상치로 주입했고, 이 행들은 전부 Distance_to_Subway=NaN.
+Target을 ÷0.4로 복원해 모든 모델이 오염 없는 라벨로 학습하게 함.
+(급조 단일 LGBM도 복원만으로 OOF 1,994.6 — 기존 12모델 앙상블 OOF ~2,161 압도)
+테스트 NaN 21건의 이상치는 이후 그룹 프로빙으로 특정 예정 — 이 노트북에서는 건드리지 않음.
+나머지 구조(12모델/±3.0 Winsorize/50:30:20/기하평균)는 전략91과 동일.
+"""
+import os
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+from sklearn.model_selection import KFold
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import ExtraTreesRegressor
+from catboost import CatBoostRegressor
+import lightgbm as lgb
+import warnings
+warnings.filterwarnings('ignore')
+
+if os.path.exists('/kaggle/input'):
+    INPUT_DIR = '/kaggle/input/competitions/scu-5th-ai-competition'
+    OUTPUT_DIR = '/kaggle/working'
+else:
+    _DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    INPUT_DIR = _DIR
+    OUTPUT_DIR = _DIR
+
+N_SPLITS = 5
+CAT_FEATURES = ['Gu', 'Dong']
+MODELS = ['cb_log', 'cb_raw', 'lgb_log', 'lgb_raw']
+BLEND_W53 = 0.0  # OOT 탐색 결과: pred_47(PL2) 단독이 최적 (0:100 vs 기존 80:20)
+
+train_orig = pd.read_csv(f'{INPUT_DIR}/seoul_real_estate_train.csv')
+test_orig = pd.read_csv(f'{INPUT_DIR}/seoul_real_estate_test.csv')
+sample_sub = pd.read_csv(f'{INPUT_DIR}/sample_submission.csv')
+
+# === 훈련 이상치 5건 복원 (Target = 진짜가격×0.4로 주입된 행들, ÷0.4로 원복) ===
+OUTLIER_IDS = ['TR_1537', 'TR_1114', 'TR_1064', 'TR_2287', 'TR_1447']
+_out_mask = train_orig['ID'].isin(OUTLIER_IDS)
+assert _out_mask.sum() == 5, f"이상치 5건이어야 함: {_out_mask.sum()}건"
+_restored = (train_orig.loc[_out_mask, 'Target'] / 0.4).round()
+assert (abs(train_orig.loc[_out_mask, 'Target'] / 0.4 - _restored) < 1e-3).all(), "복원값이 정수에서 벗어남"
+train_orig.loc[_out_mask, 'Target'] = _restored
+print(f"훈련 이상치 {_out_mask.sum()}건 복원 완료: {sorted(train_orig.loc[_out_mask, 'Target'].tolist())}")
+
+y_true_orig = train_orig['Target'].values
+n_orig = len(train_orig)
+area_train = train_orig['Exclusive_Area'].values
+area_test = test_orig['Exclusive_Area'].values
+
+# === GTR ===
+last_train_ym = train_orig['Transaction_YearMonth'].max()
+last_train_seq = (last_train_ym // 100 - 2024) * 12 + last_train_ym % 100
+gu_growth = {}
+for gu in train_orig['Gu'].unique():
+    monthly = train_orig[train_orig['Gu'] == gu].groupby('Transaction_YearMonth')['Target'].mean()
+    gu_growth[gu] = monthly.pct_change().dropna().mean()
+test_seq = (test_orig['Transaction_YearMonth'] // 100 - 2024) * 12 + test_orig['Transaction_YearMonth'] % 100
+months_ahead = test_seq.values - last_train_seq
+trend_correction = np.array([(1 + gu_growth[gu]) ** m for gu, m in zip(test_orig['Gu'], months_ahead)])
+
+# === 전처리 ===
+def base_preprocess(df):
+    df = df.copy()
+    df['Distance_to_Subway'] = df['Distance_to_Subway'].fillna(df['Distance_to_Subway'].median())
+    df['Age'] = 2026 - df['Year_Built']
+    df['Year'] = df['Transaction_YearMonth'] // 100
+    df['Month'] = df['Transaction_YearMonth'] % 100
+    df = df.drop(columns=['ID', 'Transaction_YearMonth', 'Year_Built'])
+    return df
+
+def add_feature_engineering(df):
+    df = df.copy()
+    df['YearMonth_Seq'] = (df['Year'] - 2024) * 12 + df['Month']
+    df['Area_x_Floor'] = df['Exclusive_Area'] * df['Floor']
+    df['Floor_per_Area'] = df['Floor'] / df['Exclusive_Area']
+    df['Brand_x_Area'] = df['Brand_Apartment'] * df['Exclusive_Area']
+    return df
+
+def encode_categoricals(train_df, test_df, as_category=False):
+    train_df, test_df = train_df.copy(), test_df.copy()
+    for col in CAT_FEATURES:
+        le = LabelEncoder()
+        combined = list(train_df[col].astype(str)) + list(test_df[col].astype(str))
+        le.fit(combined)
+        train_df[col] = le.transform(train_df[col].astype(str))
+        test_df[col] = le.transform(test_df[col].astype(str))
+        if as_category:
+            train_df[col] = train_df[col].astype('category')
+            test_df[col] = test_df[col].astype('category')
+    return train_df, test_df
+
+def prepare_data(train_df, test_df):
+    train_p = add_feature_engineering(base_preprocess(train_df))
+    test_p = add_feature_engineering(base_preprocess(test_df))
+    train_cb, test_cb = encode_categoricals(train_p, test_p, as_category=False)
+    train_lgb, test_lgb = encode_categoricals(train_p, test_p, as_category=True)
+    return train_cb, test_cb, train_lgb, test_lgb
+
+CB_PARAMS = {
+    'learning_rate': 0.010118898857677389, 'depth': 3,
+    'l2_leaf_reg': 4.944272225334265, 'bagging_temperature': 1.4823308606638113,
+    'random_strength': 0.4685604025205004, 'min_data_in_leaf': 46,
+}
+LGB_PARAMS = {
+    'learning_rate': 0.022992006545037823, 'num_leaves': 110, 'max_depth': 3,
+    'min_child_samples': 27, 'subsample': 0.9312452053625488,
+    'colsample_bytree': 0.8234901310320267, 'reg_alpha': 0.012423757285817386,
+    'reg_lambda': 0.04673443002441543,
+}
+LGB_ET_PARAMS = {
+    'extra_trees': True, 'max_depth': 3, 'num_leaves': 31,
+    'feature_fraction': 0.6, 'bagging_fraction': 0.7, 'bagging_freq': 1,
+    'min_child_samples': 30, 'learning_rate': 0.02,
+}
+
+train_cb, test_cb, train_lgb, test_lgb = prepare_data(train_orig, test_orig)
+X_cb = train_cb.drop(columns=['Target'])
+X_test_cb = test_cb
+cat_idx = [X_cb.columns.get_loc(c) for c in CAT_FEATURES]
+X_lgb = train_lgb.drop(columns=['Target'])
+X_test_lgb = test_lgb
+
+def train_12models(X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx,
+                   y_log, y_raw, y_up_log, y_up_raw, area_tr, area_te,
+                   n_orig, kf, seed, label):
+    all_oof = {}
+    all_tpred = {}
+
+    for fold, (tr, va) in enumerate(kf.split(X_cb)):
+        print(f"  [{label}] Fold {fold+1}/5")
+
+        m = CatBoostRegressor(loss_function='RMSE', random_seed=seed, verbose=0, iterations=3000, early_stopping_rounds=100, **CB_PARAMS)
+        m.fit(X_cb.iloc[tr], y_log[tr] if isinstance(y_log, np.ndarray) else y_log.iloc[tr],
+              eval_set=(X_cb.iloc[va], y_log[va] if isinstance(y_log, np.ndarray) else y_log.iloc[va]), cat_features=cat_idx)
+        all_oof.setdefault('cb_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_cb.iloc[va]))
+        all_tpred['cb_log'] = all_tpred.get('cb_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_test_cb)) / 5
+
+        m = CatBoostRegressor(loss_function='RMSE', random_seed=seed, verbose=0, iterations=3000, early_stopping_rounds=100, **CB_PARAMS)
+        m.fit(X_cb.iloc[tr], y_raw[tr], eval_set=(X_cb.iloc[va], y_raw[va]), cat_features=cat_idx)
+        all_oof.setdefault('cb_raw', np.zeros(len(X_cb)))[va] = m.predict(X_cb.iloc[va])
+        all_tpred['cb_raw'] = all_tpred.get('cb_raw', np.zeros(len(X_test_cb))) + m.predict(X_test_cb) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_log[tr] if isinstance(y_log, np.ndarray) else y_log.iloc[tr],
+              eval_set=[(X_lgb.iloc[va], y_log[va] if isinstance(y_log, np.ndarray) else y_log.iloc[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgb_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_lgb.iloc[va]))
+        all_tpred['lgb_log'] = all_tpred.get('lgb_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_test_lgb)) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_raw[tr], eval_set=[(X_lgb.iloc[va], y_raw[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgb_raw', np.zeros(len(X_cb)))[va] = m.predict(X_lgb.iloc[va])
+        all_tpred['lgb_raw'] = all_tpred.get('lgb_raw', np.zeros(len(X_test_cb))) + m.predict(X_test_lgb) / 5
+
+        m = CatBoostRegressor(loss_function='RMSE', random_seed=seed, verbose=0, iterations=3000, early_stopping_rounds=100, **CB_PARAMS)
+        m.fit(X_cb.iloc[tr], y_up_log[tr], eval_set=(X_cb.iloc[va], y_up_log[va]), cat_features=cat_idx)
+        all_oof.setdefault('cb_up_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_cb.iloc[va]))
+        all_tpred['cb_up_log'] = all_tpred.get('cb_up_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_test_cb)) / 5
+
+        m = CatBoostRegressor(loss_function='RMSE', random_seed=seed, verbose=0, iterations=3000, early_stopping_rounds=100, **CB_PARAMS)
+        m.fit(X_cb.iloc[tr], y_up_raw[tr], eval_set=(X_cb.iloc[va], y_up_raw[va]), cat_features=cat_idx)
+        all_oof.setdefault('cb_up_raw', np.zeros(len(X_cb)))[va] = m.predict(X_cb.iloc[va])
+        all_tpred['cb_up_raw'] = all_tpred.get('cb_up_raw', np.zeros(len(X_test_cb))) + m.predict(X_test_cb) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_up_log[tr], eval_set=[(X_lgb.iloc[va], y_up_log[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgb_up_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_lgb.iloc[va]))
+        all_tpred['lgb_up_log'] = all_tpred.get('lgb_up_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_test_lgb)) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_up_raw[tr], eval_set=[(X_lgb.iloc[va], y_up_raw[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgb_up_raw', np.zeros(len(X_cb)))[va] = m.predict(X_lgb.iloc[va])
+        all_tpred['lgb_up_raw'] = all_tpred.get('lgb_up_raw', np.zeros(len(X_test_cb))) + m.predict(X_test_lgb) / 5
+
+        scaler = StandardScaler()
+        X_sc_tr = scaler.fit_transform(X_cb.iloc[tr])
+        X_sc_va = scaler.transform(X_cb.iloc[va])
+        X_sc_te = scaler.transform(X_test_cb)
+
+        m = ExtraTreesRegressor(n_estimators=500, max_depth=12, min_samples_leaf=10, random_state=seed, n_jobs=-1)
+        m.fit(X_sc_tr, y_log[tr] if isinstance(y_log, np.ndarray) else y_log.iloc[tr])
+        all_oof.setdefault('et_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_sc_va))
+        all_tpred['et_log'] = all_tpred.get('et_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_sc_te)) / 5
+
+        m = ExtraTreesRegressor(n_estimators=500, max_depth=12, min_samples_leaf=10, random_state=seed, n_jobs=-1)
+        m.fit(X_sc_tr, y_raw[tr])
+        all_oof.setdefault('et_raw', np.zeros(len(X_cb)))[va] = m.predict(X_sc_va)
+        all_tpred['et_raw'] = all_tpred.get('et_raw', np.zeros(len(X_test_cb))) + m.predict(X_sc_te) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_ET_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_log[tr] if isinstance(y_log, np.ndarray) else y_log.iloc[tr],
+              eval_set=[(X_lgb.iloc[va], y_log[va] if isinstance(y_log, np.ndarray) else y_log.iloc[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgbet_log', np.zeros(len(X_cb)))[va] = np.expm1(m.predict(X_lgb.iloc[va]))
+        all_tpred['lgbet_log'] = all_tpred.get('lgbet_log', np.zeros(len(X_test_cb))) + np.expm1(m.predict(X_test_lgb)) / 5
+
+        m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1, random_state=seed, n_estimators=3000, **LGB_ET_PARAMS)
+        m.fit(X_lgb.iloc[tr], y_raw[tr], eval_set=[(X_lgb.iloc[va], y_raw[va])],
+              callbacks=[lgb.early_stopping(100, verbose=False)])
+        all_oof.setdefault('lgbet_raw', np.zeros(len(X_cb)))[va] = m.predict(X_lgb.iloc[va])
+        all_tpred['lgbet_raw'] = all_tpred.get('lgbet_raw', np.zeros(len(X_test_cb))) + m.predict(X_test_lgb) / 5
+
+    for k in ['cb_up_log', 'cb_up_raw', 'lgb_up_log', 'lgb_up_raw']:
+        all_oof[k] = all_oof[k][:n_orig] * area_tr[:n_orig]
+        all_tpred[k] = all_tpred[k] * area_te
+    for k in [kk for kk in all_oof if kk not in ['cb_up_log', 'cb_up_raw', 'lgb_up_log', 'lgb_up_raw']]:
+        all_oof[k] = all_oof[k][:n_orig]
+
+    return all_oof, all_tpred
+
+def ridge_stack(all_oof, all_tpred, y_true, n_orig, n_test, kf_meta):
+    """Best-alpha Ridge stacking. 이제 best_oof(전 구간 OOF)까지 같이 반환."""
+    base_12 = ['cb_log', 'cb_raw', 'lgb_log', 'lgb_raw',
+               'cb_up_log', 'cb_up_raw', 'lgb_up_log', 'lgb_up_raw',
+               'et_log', 'et_raw', 'lgbet_log', 'lgbet_raw']
+    st_tr = np.column_stack([all_oof[k] for k in base_12])
+    st_te = np.column_stack([all_tpred[k] for k in base_12])
+    best_rmse = float('inf')
+    best_test = None
+    best_oof = None
+    for alpha in [0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0]:
+        s_oof = np.zeros(n_orig)
+        s_test = np.zeros(n_test)
+        for fold, (tr, va) in enumerate(kf_meta.split(st_tr)):
+            meta = Ridge(alpha=alpha)
+            meta.fit(st_tr[tr], y_true[tr])
+            s_oof[va] = meta.predict(st_tr[va])
+            s_test += meta.predict(st_te) / kf_meta.n_splits
+        rmse = np.sqrt(np.mean((s_oof - y_true) ** 2))
+        if rmse < best_rmse:
+            best_rmse = rmse
+            best_test = s_test.copy()
+            best_oof = s_oof.copy()
+    return best_test, best_rmse, best_oof
+
+def residual_gbdt(X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx, y_resid, y_resid_up,
+                   area_tr, area_te, n_orig, n_test, label):
+    """4시드 GBDT 잔차 학습. (test 예측 평균, OOF 평균) 반환."""
+    seed_tests, seed_oofs = [], []
+    for seed in [42, 123, 456, 789]:
+        print(f"  --- {label} Resid Seed {seed} ---")
+        kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
+        oof_r, tpred_r = {}, {}
+        for fold, (tr, va) in enumerate(kf.split(X_cb)):
+            for nm, Xtr, Xva, Xte, y, params, is_cb in [
+                ('cb_r', X_cb, X_cb, X_test_cb, y_resid, CB_PARAMS, True),
+                ('cb_ru', X_cb, X_cb, X_test_cb, y_resid_up, CB_PARAMS, True),
+                ('lgb_r', X_lgb, X_lgb, X_test_lgb, y_resid, LGB_PARAMS, False),
+                ('lgb_ru', X_lgb, X_lgb, X_test_lgb, y_resid_up, LGB_PARAMS, False),
+            ]:
+                if is_cb:
+                    m = CatBoostRegressor(loss_function='RMSE', random_seed=seed, verbose=0,
+                                          iterations=3000, early_stopping_rounds=100, **params)
+                    m.fit(Xtr.iloc[tr], y[tr], eval_set=(Xva.iloc[va], y[va]), cat_features=cat_idx)
+                else:
+                    m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1,
+                                           random_state=seed, n_estimators=3000, **params)
+                    m.fit(Xtr.iloc[tr], y[tr], eval_set=[(Xva.iloc[va], y[va])],
+                          callbacks=[lgb.early_stopping(100, verbose=False)])
+                oof_r.setdefault(nm, np.zeros(n_orig))[va] = m.predict(Xva.iloc[va])
+                tpred_r[nm] = tpred_r.get(nm, np.zeros(n_test)) + m.predict(Xte) / 5
+
+            sc = StandardScaler()
+            Xstr = sc.fit_transform(X_cb.iloc[tr]); Xsva = sc.transform(X_cb.iloc[va]); Xste = sc.transform(X_test_cb)
+            m = ExtraTreesRegressor(n_estimators=500, max_depth=12, min_samples_leaf=10, random_state=seed, n_jobs=-1)
+            m.fit(Xstr, y_resid[tr])
+            oof_r.setdefault('et_r', np.zeros(n_orig))[va] = m.predict(Xsva)
+            tpred_r['et_r'] = tpred_r.get('et_r', np.zeros(n_test)) + m.predict(Xste) / 5
+
+            m = lgb.LGBMRegressor(objective='regression', metric='rmse', verbose=-1,
+                                   random_state=seed, n_estimators=3000, **LGB_ET_PARAMS)
+            m.fit(X_lgb.iloc[tr], y_resid[tr], eval_set=[(X_lgb.iloc[va], y_resid[va])],
+                  callbacks=[lgb.early_stopping(100, verbose=False)])
+            oof_r.setdefault('lgbet_r', np.zeros(n_orig))[va] = m.predict(X_lgb.iloc[va])
+            tpred_r['lgbet_r'] = tpred_r.get('lgbet_r', np.zeros(n_test)) + m.predict(X_test_lgb) / 5
+
+        for k in ['cb_ru', 'lgb_ru']:
+            oof_r[k] *= area_tr; tpred_r[k] *= area_te
+
+        rnames = ['cb_r', 'lgb_r', 'cb_ru', 'lgb_ru', 'et_r', 'lgbet_r']
+        st_tr = np.column_stack([oof_r[k] for k in rnames])
+        st_te = np.column_stack([tpred_r[k] for k in rnames])
+        best_rmse, best_test, best_oof = float('inf'), None, None
+        kf_meta = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+        for alpha in [0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0]:
+            s_oof, s_test = np.zeros(n_orig), np.zeros(n_test)
+            for tr, va in kf_meta.split(st_tr):
+                meta = Ridge(alpha=alpha); meta.fit(st_tr[tr], y_resid[tr])
+                s_oof[va] = meta.predict(st_tr[va]); s_test += meta.predict(st_te) / N_SPLITS
+            rmse = np.sqrt(np.mean((s_oof - y_resid) ** 2))
+            if rmse < best_rmse: best_rmse = rmse; best_test = s_test.copy(); best_oof = s_oof.copy()
+        seed_tests.append(best_test)
+        seed_oofs.append(best_oof)
+    return np.mean(seed_tests, axis=0), np.mean(seed_oofs, axis=0)
+
+# =============================================
+# 전략 47 (PL2 + 12모델) — BLEND_W53=0.0 확정 반영, PART1(pred_53) 계산 생략
+# =============================================
+y_log = np.log1p(y_true_orig)
+y_raw = y_true_orig.copy()
+y_up_log = np.log1p(y_true_orig / area_train)
+y_up_raw = (y_true_orig / area_train).astype(float)
+
+print(f"\n{'=' * 60}")
+print("전략 47 (PL2 + 12모델)")
+print("=" * 60)
+
+kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+oof_s1, tpred_s1 = train_12models(X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx,
+                                    y_log, y_raw, y_up_log, y_up_raw,
+                                    area_train, area_test, n_orig, kf, 42, "S47-PL")
+
+base4_tpred = np.column_stack([tpred_s1[k] for k in MODELS])
+pseudo_labels = base4_tpred.mean(axis=1)
+model_disagreement = np.std(base4_tpred, axis=1) / np.mean(base4_tpred, axis=1)
+confidence = 1 - model_disagreement
+mask = confidence >= np.percentile(confidence, 50)
+
+test_selected = test_orig[mask].copy()
+test_selected['Target'] = pseudo_labels[mask]
+train_aug = pd.concat([train_orig, test_selected], ignore_index=True)
+area_train_aug = train_aug['Exclusive_Area'].values
+
+print(f"\n  PL2: {mask.sum()}건 채택")
+
+train_cb2, test_cb2, train_lgb2, test_lgb2 = prepare_data(train_aug, test_orig)
+X_cb2 = train_cb2.drop(columns=['Target'])
+X_test_cb2 = test_cb2
+cat_idx2 = [X_cb2.columns.get_loc(c) for c in CAT_FEATURES]
+X_lgb2 = train_lgb2.drop(columns=['Target'])
+X_test_lgb2 = test_lgb2
+
+y_log_aug = np.log1p(train_aug['Target'])
+y_raw_aug = train_aug['Target'].values
+y_up_log_aug = np.log1p(train_aug['Target'].values / area_train_aug)
+y_up_raw_aug = (train_aug['Target'].values / area_train_aug).astype(float)
+
+# Stage 2: 4시드 평균 (pred_53처럼)
+seed_tests_47, seed_oofs_47 = [], []
+for seed47 in [42, 123, 456, 789]:
+    print(f"  --- S47 Seed {seed47} ---")
+    kf2 = KFold(n_splits=N_SPLITS, shuffle=True, random_state=seed47)
+    oof_47_s, tpred_47_s = train_12models(X_cb2, X_test_cb2, X_lgb2, X_test_lgb2, cat_idx2,
+                                          y_log_aug, y_raw_aug, y_up_log_aug, y_up_raw_aug,
+                                          area_train_aug, area_test, n_orig, kf2, seed47, f"S47-{seed47}")
+    kf_meta = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+    pred_47_s, rmse_47_s, oof_47_pred_s = ridge_stack(oof_47_s, tpred_47_s, y_true_orig, n_orig, len(test_orig), kf_meta)
+    print(f"    Seed {seed47}: OOF {rmse_47_s:,.0f}")
+    seed_tests_47.append(pred_47_s)
+    seed_oofs_47.append(oof_47_pred_s)
+
+pred_47 = np.mean(seed_tests_47, axis=0)
+oof_47_pred = np.mean(seed_oofs_47, axis=0)
+rmse_47 = np.sqrt(np.mean((oof_47_pred - y_true_orig)**2))
+print(f"\n  전략47(4시드 평균) OOF: {rmse_47:,.0f}")
+
+# =============================================
+# 전략 56 예측 (GBDT + GTR)
+# =============================================
+print(f"\n{'=' * 60}")
+print("전략 56: GBDT + GTR")
+print("=" * 60)
+
+pred_56 = pred_47 * trend_correction  # BLEND_W53=0.0 확정 (전략80) — PART1 불필요
+# OOF는 in-sample(미래 시점 아님)이므로 트렌드 보정 없이 그대로 비교
+oof_56 = oof_47_pred
+print(f"  pred_56 mean: {pred_56.mean():,.0f}, OOF RMSE: {np.sqrt(np.mean((oof_56 - y_true_orig) ** 2)):,.0f}")
+
+# =============================================
+# 전략 63: Per-Gu Ridge Skeleton + GBDT Residual
+# =============================================
+print(f"\n{'=' * 60}")
+print("전략 63: Per-Gu Ridge Skeleton + GBDT Residual")
+print("=" * 60)
+
+train_skel = add_feature_engineering(base_preprocess(train_orig))
+test_skel = add_feature_engineering(base_preprocess(test_orig))
+
+gu_train = train_skel['Gu'].values
+gu_test = test_skel['Gu'].values
+num_cols_skel = [c for c in train_skel.columns if c not in ['Gu', 'Dong', 'Target']]
+
+ohe_dong = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+ohe_dong.fit(pd.concat([train_skel[['Dong']], test_skel[['Dong']]]))
+dong_tr = ohe_dong.transform(train_skel[['Dong']])
+dong_te = ohe_dong.transform(test_skel[['Dong']])
+
+X_skel_raw_tr = np.hstack([train_skel[num_cols_skel].values.astype(float), dong_tr])
+X_skel_raw_te = np.hstack([test_skel[num_cols_skel].values.astype(float), dong_te])
+
+skeleton_oof_pergu = np.zeros(n_orig)
+skeleton_test_pergu = np.zeros(len(test_orig))
+
+for gu in np.unique(gu_train):
+    tr_mask = gu_train == gu
+    te_mask = gu_test == gu
+    n_gu = tr_mask.sum()
+    n_splits_gu = min(N_SPLITS, n_gu)
+    if n_splits_gu < 2:
+        continue
+
+    scaler_gu = StandardScaler()
+    X_gu = scaler_gu.fit_transform(X_skel_raw_tr[tr_mask])
+    y_gu = y_log[tr_mask]
+    y_true_gu = y_true_orig[tr_mask]
+
+    kf_gu = KFold(n_splits=n_splits_gu, shuffle=True, random_state=42)
+    best_alpha_gu, best_rmse_gu = None, float('inf')
+    for alpha in [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]:
+        oof_tmp = np.zeros(n_gu)
+        for tr, va in kf_gu.split(X_gu):
+            m = Ridge(alpha=alpha); m.fit(X_gu[tr], y_gu[tr])
+            oof_tmp[va] = m.predict(X_gu[va])
+        rmse = np.sqrt(np.mean((np.expm1(oof_tmp) - y_true_gu) ** 2))
+        if rmse < best_rmse_gu: best_rmse_gu = rmse; best_alpha_gu = alpha
+
+    idx_tr = np.where(tr_mask)[0]
+    for tr, va in kf_gu.split(X_gu):
+        m = Ridge(alpha=best_alpha_gu); m.fit(X_gu[tr], y_gu[tr])
+        skeleton_oof_pergu[idx_tr[va]] = np.expm1(m.predict(X_gu[va]))
+
+    if te_mask.sum() > 0:
+        X_gu_te = scaler_gu.transform(X_skel_raw_te[te_mask])
+        m_full = Ridge(alpha=best_alpha_gu); m_full.fit(X_gu, y_gu)
+        skeleton_test_pergu[te_mask] = np.expm1(m_full.predict(X_gu_te))
+
+    print(f"  Gu={gu}: n={n_gu}, alpha={best_alpha_gu}, RMSE={best_rmse_gu:,.0f}")
+
+print(f"  Per-Gu Skeleton OOF RMSE: {np.sqrt(np.mean((skeleton_oof_pergu - y_true_orig) ** 2)):,.0f}")
+
+y_resid_pergu_raw = (y_true_orig - skeleton_oof_pergu).astype(float)
+# Winsorize: 극단 잔차 클리핑 (±2.0*std). OOT에서 2,647→2,642로 5점 개선 확인.
+_std = float(np.std(y_resid_pergu_raw))
+y_resid_pergu = np.clip(y_resid_pergu_raw, -3.0 * _std, 3.0 * _std).astype(float)
+y_resid_up_pergu = (y_resid_pergu / area_train).astype(float)
+print(f"  Winsorized Per-Gu residual: std={_std:.0f}, clip={2.0*_std:.0f}, clipped={np.sum(np.abs(y_resid_pergu_raw)>2.0*_std)}건")
+
+resid_test_pergu, resid_oof_pergu = residual_gbdt(
+    X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx, y_resid_pergu, y_resid_up_pergu,
+    area_train, area_test, n_orig, len(test_orig), "PerGu")
+
+pred_63 = skeleton_test_pergu + resid_test_pergu
+oof_63 = skeleton_oof_pergu + resid_oof_pergu
+print(f"  pred_63 mean: {pred_63.mean():,.0f}, OOF RMSE: {np.sqrt(np.mean((oof_63 - y_true_orig) ** 2)):,.0f}")
+
+# =============================================
+# 전략 69: One-Hot Gu/Dong Skeleton + GBDT Residual
+# =============================================
+print(f"\n{'=' * 60}")
+print("전략 69: One-Hot Skeleton + GBDT Residual")
+print("=" * 60)
+
+ohe_gd = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+ohe_gd.fit(pd.concat([train_skel[['Gu', 'Dong']], test_skel[['Gu', 'Dong']]]))
+X_skel_oh_tr = np.hstack([train_skel[num_cols_skel].values.astype(float), ohe_gd.transform(train_skel[['Gu', 'Dong']])])
+X_skel_oh_te = np.hstack([test_skel[num_cols_skel].values.astype(float), ohe_gd.transform(test_skel[['Gu', 'Dong']])])
+
+scaler_skel = StandardScaler()
+X_skel_oh_all = scaler_skel.fit_transform(X_skel_oh_tr)
+X_skel_oh_test = scaler_skel.transform(X_skel_oh_te)
+
+skeleton_oof_oh = np.zeros(n_orig)
+kf_skel = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+best_alpha_skel, best_rmse_skel = None, float('inf')
+for alpha in [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]:
+    oof_tmp = np.zeros(n_orig)
+    for tr, va in kf_skel.split(X_skel_oh_all):
+        m = Ridge(alpha=alpha); m.fit(X_skel_oh_all[tr], y_log[tr])
+        oof_tmp[va] = m.predict(X_skel_oh_all[va])
+    rmse = np.sqrt(np.mean((np.expm1(oof_tmp) - y_true_orig) ** 2))
+    if rmse < best_rmse_skel: best_rmse_skel = rmse; best_alpha_skel = alpha
+
+for tr, va in kf_skel.split(X_skel_oh_all):
+    m = Ridge(alpha=best_alpha_skel); m.fit(X_skel_oh_all[tr], y_log[tr])
+    skeleton_oof_oh[va] = np.expm1(m.predict(X_skel_oh_all[va]))
+m_full = Ridge(alpha=best_alpha_skel); m_full.fit(X_skel_oh_all, y_log)
+skeleton_test_oh = np.expm1(m_full.predict(X_skel_oh_test))
+print(f"  One-Hot Skeleton OOF RMSE: {best_rmse_skel:,.0f} (alpha={best_alpha_skel})")
+
+y_resid_oh_raw = (y_true_orig - skeleton_oof_oh).astype(float)
+_std_oh = float(np.std(y_resid_oh_raw))
+y_resid_oh = np.clip(y_resid_oh_raw, -3.0 * _std_oh, 3.0 * _std_oh).astype(float)
+y_resid_up_oh = (y_resid_oh / area_train).astype(float)
+print(f"  Winsorized One-Hot residual: std={_std_oh:.0f}, clipped={np.sum(np.abs(y_resid_oh_raw)>3.0*_std_oh)}건")
+
+resid_test_oh, resid_oof_oh = residual_gbdt(
+    X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx, y_resid_oh, y_resid_up_oh,
+    area_train, area_test, n_orig, len(test_orig), "OneHot")
+
+pred_69 = skeleton_test_oh + resid_test_oh
+oof_69 = skeleton_oof_oh + resid_oof_oh
+print(f"  pred_69 mean: {pred_69.mean():,.0f}, OOF RMSE: {np.sqrt(np.mean((oof_69 - y_true_orig) ** 2)):,.0f}")
+
+# =============================================
+# 3-WAY 블렌딩: 가중치는 OOT(시간분리 holdout) 검증으로 결정
+# =============================================
+print(f"\n{'=' * 60}")
+print("3-way 블렌딩")
+print("=" * 60)
+
+print(f"  56↔63 상관: {np.corrcoef(oof_56, oof_63)[0,1]:.4f}")
+print(f"  56↔69 상관: {np.corrcoef(oof_56, oof_69)[0,1]:.4f}")
+print(f"  63↔69 상관: {np.corrcoef(oof_63, oof_69)[0,1]:.4f}")
+
+# naive in-sample OOF 그리드서치는 56:63:69=90:10:0을 골랐으나, 이는 이미 검증된 사실
+# (56단독 Public 2,086.6 > 56+63 60:40 Public 2,039.7)과 정면으로 상충 -> 신뢰 불가.
+# 대신 oot_split(holdout_months=3)으로 56/63/69를 따로 학습해 실제 라벨이 있는 미래 3개월에
+# 직접 평가한 결과를 사용: 56단독 2,631 -> 60:40 2,601(기존 사실 재현, 사니티체크 통과)
+# -> 56:63:69 = 50:30:20이 2,595.1로 최적이며 그 주변 조합들도 비슷해 과적합된 점은 아님.
+w56, w63, w69 = 0.5, 0.3, 0.2
+print(f"  가중치(OOT 검증): 56×{w56:.0%} + 63×{w63:.0%} + 69×{w69:.0%}")
+
+baseline_60_40_oof = np.sqrt(np.mean((0.6 * oof_56 + 0.4 * oof_63 - y_true_orig) ** 2))
+chosen_oof = np.sqrt(np.mean((w56 * oof_56 + w63 * oof_63 + w69 * oof_69 - y_true_orig) ** 2))
+print(f"  (참고, 신뢰 안 함) 기존 56×60%+63×40% OOF RMSE: {baseline_60_40_oof:,.0f}")
+print(f"  (참고, 신뢰 안 함) 선택 가중치 OOF RMSE: {chosen_oof:,.0f}")
+
+# 로그공간 가중 기하평균 블렌딩 (전략84와의 유일한 차이점)
+final_pred = np.exp(w56 * np.log(pred_56) + w63 * np.log(pred_63) + w69 * np.log(pred_69))
+arith_pred = w56 * pred_56 + w63 * pred_63 + w69 * pred_69
+print(f"  기하평균 vs 산술평균 차이: mean={np.mean(final_pred - arith_pred):+,.1f}, max={np.max(np.abs(final_pred - arith_pred)):,.1f}")
+print(f"  Final mean: {final_pred.mean():,.0f}")
+
+sub = sample_sub.copy()
+sub['Target'] = final_pred
+sub.to_csv(f'{OUTPUT_DIR}/submission.csv', index=False)
+print(f"\n제출 파일 저장 완료: {OUTPUT_DIR}/submission.csv")
