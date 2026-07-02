@@ -435,11 +435,11 @@ for gu in np.unique(gu_train):
 print(f"  Per-Gu Skeleton OOF RMSE: {np.sqrt(np.mean((skeleton_oof_pergu - y_true_orig) ** 2)):,.0f}")
 
 y_resid_pergu_raw = (y_true_orig - skeleton_oof_pergu).astype(float)
-# Winsorize: 극단 잔차 클리핑 (±2.0*std). OOT에서 2,647→2,642로 5점 개선 확인.
+# Winsorize: 극단 잔차 클리핑 (±3.0*std, 전략84에서 Public 최적 확인).
 _std = float(np.std(y_resid_pergu_raw))
 y_resid_pergu = np.clip(y_resid_pergu_raw, -3.0 * _std, 3.0 * _std).astype(float)
 y_resid_up_pergu = (y_resid_pergu / area_train).astype(float)
-print(f"  Winsorized Per-Gu residual: std={_std:.0f}, clip={2.0*_std:.0f}, clipped={np.sum(np.abs(y_resid_pergu_raw)>2.0*_std)}건")
+print(f"  Winsorized Per-Gu residual: std={_std:.0f}, clip={3.0*_std:.0f}, clipped={np.sum(np.abs(y_resid_pergu_raw)>3.0*_std)}건")
 
 resid_test_pergu, resid_oof_pergu = residual_gbdt(
     X_cb, X_test_cb, X_lgb, X_test_lgb, cat_idx, y_resid_pergu, y_resid_up_pergu,
