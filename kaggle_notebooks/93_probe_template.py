@@ -24,10 +24,18 @@ GROUP_C = ['TR_1936', 'TR_0932', 'TR_2399', 'TR_0420', 'TR_0218', 'TR_1822', 'TR
 PROBE_IDS = GROUP_A
 
 if os.path.exists('/kaggle/input'):
-    # Add Data로 첨부한 전략92 노트북 출력 경로 (첨부 후 실제 경로 확인 필요)
+    # Add Data로 첨부한 전략92 노트북 출력 — 마운트 깊이가 환경마다 달라 재귀 탐색
     import glob
-    cands = glob.glob('/kaggle/input/*/submission.csv')
-    assert cands, "전략92 출력 submission.csv를 Add Data로 첨부하세요"
+    cands = [p for p in glob.glob('/kaggle/input/**/submission.csv', recursive=True)
+             if 'sample' not in os.path.basename(p)]
+    if not cands:
+        print("submission.csv를 찾지 못함. /kaggle/input 구조:")
+        for root, dirs, files in os.walk('/kaggle/input'):
+            for f in files:
+                print(f"  {os.path.join(root, f)}")
+        raise AssertionError("전략92 출력 submission.csv를 Add Input(Your Work)으로 첨부하세요")
+    if len(cands) > 1:
+        print(f"⚠ submission.csv 후보 여러 개: {cands} → 첫 번째 사용")
     BASE_SUB = cands[0]
     OUTPUT_DIR = '/kaggle/working'
 else:
@@ -36,6 +44,18 @@ else:
     OUTPUT_DIR = _DIR
 
 sub = pd.read_csv(BASE_SUB)
+
+# === 기준 파일 지문 검증: 반드시 전략92 원본이어야 함 ===
+# (프로브 버전을 저장하면 노트북 입력이 "최신 버전"으로 따라가 프로브 출력을 기준으로
+#  읽는 사고가 발생 — Probe B가 실제로는 A+B 동시 ×0.4로 제출된 원인. 92 값으로 지문 대조.)
+FINGERPRINT = {'TR_1414': 43232.44072518415}  # 전략92 출력의 알려진 값
+for fid, fval in FINGERPRINT.items():
+    actual = float(sub.loc[sub['ID'] == fid, 'Target'].iloc[0])
+    assert abs(actual - fval) < 1.0, (
+        f"기준 파일 오염! {fid}={actual:,.1f} (92 원본은 {fval:,.1f}) — "
+        f"Input의 노트북 버전을 전략92 버전으로 다시 고정하세요")
+print("지문 검증 통과: 기준 파일은 전략92 원본")
+
 mask = sub['ID'].isin(PROBE_IDS)
 assert mask.sum() == len(PROBE_IDS), f"ID 매칭 실패: {mask.sum()}/{len(PROBE_IDS)}"
 
