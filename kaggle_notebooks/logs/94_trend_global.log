@@ -1,0 +1,92 @@
+훈련 이상치 5건 복원 완료: [27934.0, 39615.0, 39781.0, 41448.0, 46414.0]
+전역 robust 월성장률: +0.327%/월 (구별 mean 방식 대체)
+
+============================================================
+전략 47 (PL2 + 12모델)
+============================================================
+  [S47-PL] Fold 1/5
+  [S47-PL] Fold 2/5
+  [S47-PL] Fold 3/5
+  [S47-PL] Fold 4/5
+  [S47-PL] Fold 5/5
+
+  PL2: 266건 채택
+  --- S47 Seed 42 ---
+  [S47-42] Fold 1/5
+  [S47-42] Fold 2/5
+  [S47-42] Fold 3/5
+  [S47-42] Fold 4/5
+  [S47-42] Fold 5/5
+    Seed 42: OOF 1,870
+  --- S47 Seed 123 ---
+  [S47-123] Fold 1/5
+  [S47-123] Fold 2/5
+  [S47-123] Fold 3/5
+  [S47-123] Fold 4/5
+  [S47-123] Fold 5/5
+    Seed 123: OOF 1,878
+  --- S47 Seed 456 ---
+  [S47-456] Fold 1/5
+  [S47-456] Fold 2/5
+  [S47-456] Fold 3/5
+  [S47-456] Fold 4/5
+  [S47-456] Fold 5/5
+    Seed 456: OOF 1,854
+  --- S47 Seed 789 ---
+  [S47-789] Fold 1/5
+  [S47-789] Fold 2/5
+  [S47-789] Fold 3/5
+  [S47-789] Fold 4/5
+  [S47-789] Fold 5/5
+    Seed 789: OOF 1,883
+
+  전략47(4시드 평균) OOF: 1,854
+
+============================================================
+전략 56: GBDT + GTR
+============================================================
+  pred_56 mean: 39,877, OOF RMSE: 1,854
+
+============================================================
+전략 63: Per-Gu Ridge Skeleton + GBDT Residual
+============================================================
+  Gu=Eunpyeong-gu: n=251, alpha=1.0, RMSE=2,243
+  Gu=Gangnam-gu: n=243, alpha=1.0, RMSE=2,750
+  Gu=Mapo-gu: n=261, alpha=1.0, RMSE=2,330
+  Gu=Nowon-gu: n=251, alpha=1.0, RMSE=2,116
+  Gu=Seocho-gu: n=212, alpha=0.1, RMSE=2,706
+  Gu=Seongdong-gu: n=264, alpha=1.0, RMSE=2,127
+  Gu=Songpa-gu: n=248, alpha=1.0, RMSE=2,358
+  Gu=Yongsan-gu: n=239, alpha=0.1, RMSE=2,502
+  Per-Gu Skeleton OOF RMSE: 2,392
+  Winsorized Per-Gu residual: std=2391, clip=7173, clipped=10건
+  --- PerGu Resid Seed 42 ---
+  --- PerGu Resid Seed 123 ---
+  --- PerGu Resid Seed 456 ---
+  --- PerGu Resid Seed 789 ---
+  pred_63 mean: 40,703, OOF RMSE: 1,940
+
+============================================================
+전략 69: One-Hot Skeleton + GBDT Residual
+============================================================
+  One-Hot Skeleton OOF RMSE: 2,622 (alpha=10.0)
+  Winsorized One-Hot residual: std=2621, clipped=16건
+  --- OneHot Resid Seed 42 ---
+  --- OneHot Resid Seed 123 ---
+  --- OneHot Resid Seed 456 ---
+  --- OneHot Resid Seed 789 ---
+  pred_69 mean: 40,835, OOF RMSE: 1,965
+
+============================================================
+3-way 블렌딩
+============================================================
+  56↔63 상관: 0.9965
+  56↔69 상관: 0.9974
+  63↔69 상관: 0.9958
+  가중치(OOT 검증): 56×50% + 63×30% + 69×20%
+  (참고, 신뢰 안 함) 기존 56×60%+63×40% OOF RMSE: 1,851
+  (참고, 신뢰 안 함) 선택 가중치 OOF RMSE: 1,856
+  기하평균 vs 산술평균 차이: mean=-5.0, max=123.1
+  Final mean: 40,311
+
+제출 파일 저장 완료: /kaggle/working/submission.csv
